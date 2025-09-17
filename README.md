@@ -61,6 +61,14 @@ VITE_FAME_API_ENDPOINT="https://your-service-xyz.a.run.app/api/fame/run"
 3. Host the compiled frontend (`npm run build`) on Firebase Hosting, Cloud Run static build,
    or any static site service.
 
+### Cloud Run notes
+
+- The repo includes `backend/Dockerfile`; configure Cloud Build to use that file and set the build
+  context to the repository root. The image entrypoint runs `gunicorn` against `FAME_UI:app` and
+  listens on `$PORT`, which satisfies Cloud Run requirements.
+- Add any production secrets (Google credentials, spreadsheet IDs) as Cloud Run environment
+  variables or Secret Manager references rather than hard-coding them in source.
+
 ## Contributing workflow
 
 1. Fork or clone `https://github.com/patrick3395/FAME.git`.
