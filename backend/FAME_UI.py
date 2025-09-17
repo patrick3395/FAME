@@ -10,6 +10,7 @@ from typing import Dict, Iterable, List, Sequence, Tuple
 
 import numpy as np
 from flask import Flask, jsonify, request
+from flask_cors import CORS
 from matplotlib import pyplot as plt
 from matplotlib.path import Path
 from matplotlib.patches import Polygon as MplPolygon
@@ -269,6 +270,7 @@ class FameUIPipeline:
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__)
+CORS(app, resources={r"/api/fame/run": {"origins": "*"}}, supports_credentials=False)
 pipeline = FameUIPipeline()
 
 
