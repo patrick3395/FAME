@@ -1,0 +1,121 @@
+.floorplan-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+.floorplan-toolbar {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  background: #f5f5f5;
+  border-bottom: 1px solid #ddd;
+}
+
+.upload-button,
+.clear-button {
+  padding: 8px 16px;
+  background: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.upload-button:hover,
+.clear-button:hover {
+  background: #45a049;
+}
+
+.clear-button {
+  background: #f44336;
+}
+
+.clear-button:hover {
+  background: #da190b;
+}
+
+.floorplan-grid-wrapper {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+  background: white;
+}
+
+.floorplan-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 1;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.floorplan-grid {
+  border-collapse: collapse;
+  font-size: 10px;
+  position: relative;
+  z-index: 2;
+  font-family: Arial, sans-serif;
+}
+
+.floorplan-corner {
+  background: #e0e0e0;
+  border: 1px solid #999;
+  min-width: 30px;
+  height: 18px;
+  position: sticky;
+  left: 0;
+  z-index: 4;
+}
+
+.floorplan-column-header,
+.floorplan-row-header {
+  background: #e0e0e0;
+  border: 1px solid #999;
+  padding: 1px 2px;
+  text-align: center;
+  font-weight: normal;
+  min-width: 20px;
+  height: 18px;
+  position: sticky;
+  z-index: 3;
+  font-size: 10px;
+}
+
+.floorplan-column-header {
+  top: 0;
+  min-width: 20px;
+}
+
+.floorplan-row-header {
+  left: 0;
+  min-width: 30px;
+  background: #e0e0e0;
+}
+
+.floorplan-cell {
+  border: 1px solid #ccc;
+  min-width: 20px;
+  height: 18px;
+  padding: 0px 1px;
+  text-align: center;
+  cursor: pointer;
+  background: white;
+  font-size: 10px;
+}
+
+.floorplan-cell:hover {
+  background: rgba(0, 123, 255, 0.1);
+}
+
+.floorplan-cell:focus {
+  outline: 2px solid #007bff;
+  outline-offset: -1px;
+}

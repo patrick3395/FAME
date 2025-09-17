@@ -1,0 +1,1 @@
+- always update version header, kill the local dev and restart it when we make changes
