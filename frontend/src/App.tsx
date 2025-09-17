@@ -86,6 +86,10 @@ const FAME_API_ENDPOINT =
   (import.meta.env.VITE_FAME_API_ENDPOINT as string | undefined) ??
   '/api/fame/run'
 
+const FAME_API_ENDPOINT_DISPLAY = FAME_API_ENDPOINT.startswith('http')
+  ? FAME_API_ENDPOINT
+  : 'local proxy (' + FAME_API_ENDPOINT + ')'
+
 const GRAPHIC_LABELS: Record<string, string> = {
   heatmap: 'Heatmap Layer',
   repair_plan: 'Contour Layer',
@@ -1300,6 +1304,7 @@ function FloorPlanSheet({
     setInitialGraphicsState({ status: 'loading', graphics: [] })
 
     try {
+      console.info('[fp1] calling initial graphics endpoint', FAME_API_ENDPOINT, payload)
       const response = await fetch(FAME_API_ENDPOINT, {
         method: 'POST',
         headers: {
@@ -1313,6 +1318,7 @@ function FloorPlanSheet({
       }
 
       const responseBody = await response.json()
+      console.info('[fp1] initial graphics response body', responseBody)
       const graphics: InitialGraphic[] = []
 
       if (Array.isArray(responseBody?.graphics)) {
@@ -1538,6 +1544,9 @@ function FloorPlanSheet({
         </div>
       <div className="fp-summary-item">
         <strong>Analysis status:</strong> {analysisStatus}
+      </div>
+      <div className="fp-summary-item">
+        <strong>API endpoint:</strong> {FAME_API_ENDPOINT_DISPLAY}
       </div>
     </div>
       <div className="fp-run-actions">
