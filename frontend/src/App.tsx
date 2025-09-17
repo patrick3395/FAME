@@ -83,6 +83,16 @@ type InitialGraphicsState = {
   error?: string
 }
 
+const GRAPHIC_LABELS: Record<string, string> = {
+  heatmap: 'Heatmap Layer',
+  repair_plan: 'Contour Layer',
+  contours: 'Contour Layer',
+  profiles: 'Profile Lines',
+  '1 - Elevation Plot': 'Heatmap Layer',
+  '2 - Contours Mesh': 'Contour Layer',
+  '3 - All Profiles': 'Profile Lines',
+}
+
 const FAME_API_ENDPOINT =
   (import.meta.env.VITE_FAME_API_ENDPOINT as string | undefined) ??
   'https://fameuideployment-245923252465.us-south1.run.app/api/fame/run'
@@ -1294,11 +1304,11 @@ function FloorPlanSheet({
     setPayloadWarning(null)
     setInitialGraphicsState({ status: 'loading', graphics: [] })
 
-    try {
-      console.info('[fp1] calling initial graphics endpoint', FAME_API_ENDPOINT, payload)
-      const response = await fetch(FAME_API_ENDPOINT, {
-        method: 'POST',
-        headers: {
+  try {
+    console.info('[fp1] calling initial graphics endpoint', FAME_API_ENDPOINT, payload)
+    const response = await fetch(FAME_API_ENDPOINT, {
+      method: 'POST',
+      headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
@@ -1306,16 +1316,48 @@ function FloorPlanSheet({
 
       if (!response.ok) {
         throw new Error('Service responded with status ' + response.status)
-      }
+    }
 
-      const responseBody = await response.json()
-      console.info('[fp1] initial graphics response body', responseBody)
+    const responseBody = await response.json()
+    console.info('[fp1] initial graphics response body', responseBody)
+    const graphics: InitialGraphic[] = []
 
-      setInitialGraphicsState({
-        status: 'ready',
-        graphics: [],
-        message: 'Run is updated',
+    if (Array.isArray(responseBody?.graphics)) {
+      responseBody.graphics.forEach((item: { name?: string; image?: string }, index: number) => {
+        if (!item?.image || typeof item.image !== 'string') {
+          return
+        }
+        const labelKey = item.name ?? 'Layer ' + (index + 1)
+        const resolvedName = GRAPHIC_LABELS[labelKey] ?? labelKey
+        const imageSrc = item.image.startsWith('data:')
+          ? item.image
+          : 'data:image/png;base64,' + item.image
+        graphics.push({ name: resolvedName, image: imageSrc })
       })
+    } else if (responseBody?.images && typeof responseBody.images === 'object') {
+      Object.entries(responseBody.images as Record<string, unknown>).forEach(
+        ([key, value], index) => {
+          if (typeof value !== 'string') {
+            return
+          }
+          const resolvedName = GRAPHIC_LABELS[key] ?? 'Layer ' + (index + 1)
+          const imageSrc = value.startsWith('data:')
+            ? value
+            : 'data:image/png;base64,' + value
+          graphics.push({ name: resolvedName, image: imageSrc })
+        },
+      )
+    }
+
+    if (graphics.length === 0) {
+      throw new Error('No graphics returned from the analysis service.')
+    }
+
+    setInitialGraphicsState({
+      status: 'ready',
+      graphics,
+      message: 'Run is updated',
+    })
     } catch (error) {
       setInitialGraphicsState({
         status: 'error',
@@ -1531,8 +1573,15 @@ function FloorPlanSheet({
           <span className="fp-warning">{initialGraphicsState.error}</span>
         ) : null}
       </div>
-      {initialGraphicsState.status === 'ready' && initialGraphicsState.message ? (
-        <div className="fp-hint">{initialGraphicsState.message}</div>
+      {initialGraphicsState.status === 'ready' && initialGraphicsState.graphics.length > 0 ? (
+        <div className="fp-graphics-grid">
+          {initialGraphicsState.graphics.map((graphic, index) => (
+            <figure key={graphic.name + '-' + index} className="fp-graphic-card">
+              <img src={graphic.image} alt={graphic.name} />
+              <figcaption>{graphic.name}</figcaption>
+            </figure>
+          ))}
+        </div>
       ) : null}
     <div className="fp-data-panels">
       <div className="fp-panel">
