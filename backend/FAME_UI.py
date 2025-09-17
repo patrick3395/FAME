@@ -559,6 +559,7 @@ pipeline = FameUIPipeline()
 
 @app.route("/api/fame/run", methods=["POST"])
 def run_analysis():
+    print('HELLO')
     try:
         logger.info('run_analysis invoked from %s', request.remote_addr)
         print(f"[FAME_UI] run_analysis invoked from {request.remote_addr}")
@@ -578,4 +579,5 @@ def run_analysis():
 
 if __name__ == "__main__":  # pragma: no cover
     app.run(debug=True)
+
 
