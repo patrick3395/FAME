@@ -27,7 +27,7 @@ const dataBaseUrl = (import.meta.env.BASE_URL || "") + "data"
 const TEXT_URL = dataBaseUrl + "/FAME_TEXT.json"
 const EQUATIONS_URL = dataBaseUrl + "/FAME_EQUATIONS.json"
 
-const DEV_BUILD_VERSION = "Version 22"
+const DEV_BUILD_VERSION = "Version 23"
 
 
 type LoadState<T> = {
@@ -68,6 +68,7 @@ type Fp1PreviewPayload = {
   points: Array<{ x: number; y: number; z: number; label?: string }>
   spacing: number
   unit: string
+  floorplanImage?: string | null
 }
 
 type InitialGraphic = {
@@ -1058,6 +1059,7 @@ function FloorPlanSheet({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [overlaySrc, setOverlaySrc] = useState<string | null>(null)
+  const [overlayDataUrl, setOverlayDataUrl] = useState<string | null>(null)
   const [overlayScale, setOverlayScale] = useState(1)
   const [mode, setMode] = useState<'measure' | 'border'>('measure')
   const borderIdRef = useRef(1)
@@ -1096,6 +1098,13 @@ function FloorPlanSheet({
   const handleOverlayChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) {
+      setOverlaySrc((previous) => {
+        if (previous) {
+          URL.revokeObjectURL(previous)
+        }
+        return null
+      })
+      setOverlayDataUrl(null)
       return
     }
     const url = URL.createObjectURL(file)
@@ -1106,6 +1115,16 @@ function FloorPlanSheet({
       return url
     })
     setOverlayScale(1)
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      const result = reader.result
+      if (typeof result === 'string') {
+        setOverlayDataUrl(result)
+      } else {
+        setOverlayDataUrl(null)
+      }
+    }
+    reader.readAsDataURL(file)
   }
 
   const handleCellClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -1242,8 +1261,9 @@ function FloorPlanSheet({
       points,
       spacing,
       unit: unitDisplay,
+      floorplanImage: overlayDataUrl,
     }
-  }, [borderPoints, measurements, isBorderClosed, spacing, unitDisplay])
+  }, [borderPoints, measurements, isBorderClosed, spacing, unitDisplay, overlayDataUrl])
 
   useEffect(() => {
     if (!payload) {
@@ -1257,7 +1277,7 @@ function FloorPlanSheet({
 
   useEffect(() => {
     setInitialGraphicsState({ status: 'idle', graphics: [] })
-  }, [borderPoints, measurements, spacing, unitDisplay, isBorderClosed])
+  }, [borderPoints, measurements, spacing, unitDisplay, isBorderClosed, overlayDataUrl])
 
   const handlePreviewPayload = () => {
     if (!payload) {
