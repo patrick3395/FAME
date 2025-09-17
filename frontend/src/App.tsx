@@ -86,7 +86,7 @@ const FAME_API_ENDPOINT =
   (import.meta.env.VITE_FAME_API_ENDPOINT as string | undefined) ??
   '/api/fame/run'
 
-const FAME_API_ENDPOINT_DISPLAY = FAME_API_ENDPOINT.startswith('http')
+const FAME_API_ENDPOINT_DISPLAY = FAME_API_ENDPOINT.startsWith('http')
   ? FAME_API_ENDPOINT
   : 'local proxy (' + FAME_API_ENDPOINT + ')'
 

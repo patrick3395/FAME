@@ -9,6 +9,7 @@ from io import BytesIO
 from typing import Dict, Iterable, List, Sequence, Tuple, Optional
 
 import numpy as np
+import logging
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from matplotlib import pyplot as plt
@@ -21,6 +22,14 @@ from scipy.interpolate import griddata
 
 # Use non-interactive backend so the service can render off-screen
 plt.ioff()
+
+logger = logging.getLogger('FAME_UI')
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+logger.setLevel(logging.INFO)
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -89,6 +98,36 @@ class ColorScale:
     levels: np.ndarray
     vmin: float
     vmax: float
+
+
+def _summarize_points(points: Sequence[Point3D]) -> str:
+    if not points:
+        return '0 pts'
+    xs = [p.x for p in points]
+    ys = [p.y for p in points]
+    zs = [p.z for p in points]
+    return (
+        f"{len(points)} pts | x:[{min(xs):.2f},{max(xs):.2f}] "
+        f"y:[{min(ys):.2f},{max(ys):.2f}] z:[{min(zs):.2f},{max(zs):.2f}]"
+    )
+
+
+def _summarize_boundary(boundary: Sequence[BoundaryPoint]) -> str:
+    if not boundary:
+        return '0 vertices'
+    xs = [p.x for p in boundary]
+    ys = [p.y for p in boundary]
+    return (
+        f"{len(boundary)} vertices | x:[{min(xs):.2f},{max(xs):.2f}] "
+        f"y:[{min(ys):.2f},{max(ys):.2f}]"
+    )
+
+
+def _summarize_grid(label: str, grid: np.ndarray) -> str:
+    finite = np.asarray(grid[~np.isnan(grid)]) if isinstance(grid, np.ndarray) else np.asarray(grid)
+    if finite.size == 0:
+        return f"{label}: empty"
+    return f"{label}: shape={grid.shape} range=[{finite.min():.3f},{finite.max():.3f}]"
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +459,14 @@ class FameUIPipeline:
     def run(self, payload: AnalysisPayload) -> AnalysisResult:
         polygon = ensure_closed_polygon(payload.boundary)
         path = Path(polygon)
+        logger.info(
+            'FP1 payload: %s; %s; spacing=%.3f %s; floorplan=%s',
+            _summarize_boundary(payload.boundary),
+            _summarize_points(payload.points),
+            payload.spacing,
+            payload.unit,
+            bool(payload.floorplan_image),
+        )
 
         points_array = np.array([[p.x, p.y] for p in payload.points])
         z_array = np.array([p.z for p in payload.points])
@@ -431,15 +478,20 @@ class FameUIPipeline:
         )
 
         interpolated = _interpolate_surface(points_array, z_array, grid_x, grid_y)
+        logger.info(_summarize_grid('Interpolated grid', interpolated))
 
         mask = ~path.contains_points(np.vstack((grid_x.flatten(), grid_y.flatten())).T)
         mask = mask.reshape(grid_x.shape)
         interpolated = np.where(mask, np.nan, interpolated)
         masked_grid = np.ma.array(interpolated, mask=mask)
+        logger.info('Masked cells=%d', int(mask.sum()))
+        logger.info(_summarize_grid('Masked grid', masked_grid.filled(np.nan)))
 
         profile_lines = generate_profile_lines(polygon)
+        logger.info('Generated %d profile lines', len(profile_lines))
         floorplan_array = _decode_floorplan(payload.floorplan_image)
         color_scale = _compute_color_scale(masked_grid)
+        logger.info('Color scale: vmin=%.3f vmax=%.3f levels=%d', color_scale.vmin, color_scale.vmax, len(color_scale.levels))
 
         images = {
             "heatmap": plot_heatmap(
@@ -490,16 +542,20 @@ pipeline = FameUIPipeline()
 @app.route("/api/fame/run", methods=["POST"])
 def run_analysis():
     try:
+        logger.info('run_analysis invoked from %s', request.remote_addr)
         payload = AnalysisPayload.from_request(request.get_json(force=True))
         result = pipeline.run(payload)
+        logger.info('run_analysis completed successfully')
         return jsonify({
             "images": result.images,
             "profileLines": result.profile_lines,
             "unit": payload.unit,
         })
     except Exception as exc:  # pragma: no cover - top-level guard
+        logger.exception('run_analysis failed: %s', exc)
         return jsonify({"error": str(exc)}), 400
 
 
 if __name__ == "__main__":  # pragma: no cover
     app.run(debug=True)
+
