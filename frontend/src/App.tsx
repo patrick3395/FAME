@@ -27,7 +27,7 @@ const dataBaseUrl = (import.meta.env.BASE_URL || "") + "data"
 const TEXT_URL = dataBaseUrl + "/FAME_TEXT.json"
 const EQUATIONS_URL = dataBaseUrl + "/FAME_EQUATIONS.json"
 
-const DEV_BUILD_VERSION = "Version 29"
+const DEV_BUILD_VERSION = "Version 30"
 
 
 type LoadState<T> = {
@@ -82,9 +82,17 @@ type InitialGraphicsState = {
   error?: string
 }
 
-const FAME_API_ENDPOINT =
-  (import.meta.env.VITE_FAME_API_ENDPOINT as string | undefined) ??
+const DEFAULT_FAME_ENDPOINT =
   'https://fameuideveloperfunction-245923252465.us-south1.run.app/api/fame/run'
+
+const rawEndpoint = (
+  import.meta.env.VITE_FAME_API_ENDPOINT as string | undefined
+)?.trim()
+
+const FAME_API_ENDPOINT = !rawEndpoint ||
+  rawEndpoint.includes('fameuideployment-245923252465.us-south1.run.app')
+  ? DEFAULT_FAME_ENDPOINT
+  : rawEndpoint
 
 const FAME_API_ENDPOINT_DISPLAY = FAME_API_ENDPOINT.startsWith('http')
   ? FAME_API_ENDPOINT
@@ -105,6 +113,7 @@ const makeKey = (sheet: string, cell: string) => `${sheet}!${cell.toUpperCase()}
 
 function App() {
   console.debug('[banner-version]', DEV_BUILD_VERSION)
+  console.info('[config] Using FAME endpoint', FAME_API_ENDPOINT)
   const [textsState, setTextsState] = useState<LoadState<TextData>>({
     status: "idle",
     data: null,
