@@ -15,6 +15,7 @@ frontend/dist/
 
 # Legacy local copy kept out of git
 fame-ui/
+.claude/
 
 # Python virtualenvs
 venv/
