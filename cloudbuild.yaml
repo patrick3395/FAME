@@ -13,3 +13,5 @@ steps:
       - "us-south1-docker.pkg.dev/engineering-414319/fame/backend:${SHORT_SHA}"
 images:
   - "us-south1-docker.pkg.dev/engineering-414319/fame/backend:${SHORT_SHA}"
+options:
+  logging: CLOUD_LOGGING_ONLY
