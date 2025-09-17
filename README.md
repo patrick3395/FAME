@@ -70,6 +70,10 @@ VITE_FAME_API_ENDPOINT="https://your-service-xyz.a.run.app/api/fame/run"
   variables or Secret Manager references rather than hard-coding them in source.
 - When wiring Cloud Build triggers, choose the **Dockerfile** option and point to
   `backend/Dockerfile` so new pushes rebuild the container automatically.
+- The Cloud Run pipeline expects an Artifact Registry Docker repository named `fame`
+  in region `us-south1`. Create it once with
+  `gcloud artifacts repositories create fame --repository-format=docker --location=us-south1`
+  (or via the console) before running the first build.
 
 ## Contributing workflow
 
