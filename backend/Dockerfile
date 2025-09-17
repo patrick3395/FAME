@@ -6,13 +6,13 @@ ENV PYTHONDONTWRITEBYTECODE=1     PYTHONUNBUFFERED=1
 WORKDIR /app
 
 # Install system dependencies required by scientific Python libs
-RUN apt-get update     && apt-get install -y --no-install-recommends        build-essential         gfortran         libopenblas-dev         liblapack-dev         libjpeg-dev         zlib1g-dev         pkg-config     && rm -rf /var/lib/apt/lists/*
+RUN apt-get update     && apt-get install -y --no-install-recommends        build-essential        gfortran        libopenblas-dev        liblapack-dev        libjpeg-dev        zlib1g-dev        pkg-config     && rm -rf /var/lib/apt/lists/*
 
-COPY backend/requirements.txt ./requirements.txt
+COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY backend/ ./
+COPY . ./
 
 ENV PORT=8080
 
-CMD ["/bin/sh", "-c", "gunicorn --bind 0.0.0.0:8080 FAME_UI:app"]
+CMD ["/bin/sh", "-c", "gunicorn --bind 0.0.0.0:${PORT:-8080} FAME_UI:app"]
