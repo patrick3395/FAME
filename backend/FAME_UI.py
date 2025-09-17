@@ -15,6 +15,7 @@ from matplotlib import pyplot as plt
 from matplotlib.path import Path
 from matplotlib.patches import Polygon as MplPolygon
 from matplotlib.collections import PatchCollection
+from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 from PIL import Image
 from scipy.interpolate import griddata
 
@@ -80,6 +81,14 @@ class AnalysisPayload:
 class AnalysisResult:
     images: Dict[str, str]
     profile_lines: List[Dict[str, Tuple[float, float]]]
+
+@dataclass(frozen=True)
+class ColorScale:
+    cmap: LinearSegmentedColormap
+    norm: TwoSlopeNorm
+    levels: np.ndarray
+    vmin: float
+    vmax: float
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +211,53 @@ def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional
     )
 
 
+def _interpolate_surface(points: np.ndarray, values: np.ndarray, grid_x: np.ndarray, grid_y: np.ndarray) -> np.ndarray:
+    """Interpolate with cubic preference and fallbacks to cover the polygon interior."""
+    filled = np.full(grid_x.shape, np.nan, dtype=float)
+    for method in ("cubic", "linear", "nearest"):
+        try:
+            candidate = griddata(points, values, (grid_x, grid_y), method=method)
+        except Exception:
+            candidate = None
+        if candidate is None:
+            continue
+        mask = np.isnan(filled)
+        filled[mask] = candidate[mask]
+        if not np.isnan(filled).any():
+            break
+    if np.isnan(filled).any():
+        fallback = float(np.nanmean(values))
+        filled = np.where(np.isnan(filled), fallback, filled)
+    return np.clip(filled, float(np.nanmin(values)), float(np.nanmax(values)))
+
+def _compute_color_scale(grid_z: np.ndarray) -> ColorScale:
+    """Generate a red-to-green diverging color scale centered at zero."""
+    data = grid_z.compressed() if np.ma.isMaskedArray(grid_z) else grid_z[np.isfinite(grid_z)]
+    if data.size == 0:
+        data = np.array([0.0])
+    data_min = min(float(np.min(data)), 0.0)
+    data_max = max(float(np.max(data)), 0.0)
+    lo = math.floor(data_min * 10.0) / 10.0 - 0.3
+    hi = math.ceil(data_max * 10.0) / 10.0 + 0.3
+    if math.isclose(lo, hi):
+        spread = max(abs(lo), abs(hi), 0.5)
+        lo = -spread
+        hi = spread
+    zero_ratio = float(np.clip((0.0 - lo) / (hi - lo), 0.0, 1.0))
+    cmap = LinearSegmentedColormap.from_list(
+        "fame_red_green",
+        [
+            (0.0, "#991b1b"),
+            (zero_ratio, "#f8fafc"),
+            (1.0, "#166534"),
+        ],
+    )
+    levels = np.linspace(lo, hi, 32)
+    if not np.isclose(levels, 0.0).any():
+        levels = np.sort(np.append(levels, 0.0))
+    norm = TwoSlopeNorm(vmin=lo, vcenter=0.0, vmax=hi)
+    return ColorScale(cmap=cmap, norm=norm, levels=levels, vmin=lo, vmax=hi)
+
 def plot_heatmap(
     grid_x: np.ndarray,
     grid_y: np.ndarray,
@@ -209,16 +265,40 @@ def plot_heatmap(
     polygon: np.ndarray,
     points: Sequence[Point3D],
     title: str,
+    color_scale: ColorScale,
     floorplan_array: Optional[np.ndarray] = None,
 ) -> str:
     fig, ax = plt.subplots(figsize=(6, 6))
     _draw_floorplan(ax, polygon, floorplan_array)
-    contour = ax.contourf(grid_x, grid_y, grid_z, levels=32, cmap="coolwarm", alpha=0.65, zorder=1)
-    fig.colorbar(contour, ax=ax, shrink=0.8, pad=0.02, label="Elevation")
+    contour = ax.contourf(
+        grid_x,
+        grid_y,
+        grid_z,
+        levels=color_scale.levels,
+        cmap=color_scale.cmap,
+        norm=color_scale.norm,
+        zorder=1,
+    )
+    fig.colorbar(
+        contour,
+        ax=ax,
+        shrink=0.82,
+        pad=0.02,
+        label="Elevation",
+        extend="both",
+    )
     ax.add_collection(
         PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="black", linewidth=1.5, zorder=2)
     )
-    ax.scatter([p.x for p in points], [p.y for p in points], c="black", s=18, alpha=0.8, zorder=3)
+    ax.scatter(
+        [p.x for p in points],
+        [p.y for p in points],
+        c="#111827",
+        edgecolors="white",
+        linewidths=0.6,
+        s=36,
+        zorder=3,
+    )
     ax.set_title(title)
     ax.set_aspect("equal", adjustable="box")
     return to_base64(fig)
@@ -231,21 +311,46 @@ def plot_repair_plan(
     polygon: np.ndarray,
     profile_lines: Sequence[Dict[str, Tuple[float, float]]],
     title: str,
+    color_scale: ColorScale,
     floorplan_array: Optional[np.ndarray] = None,
 ) -> str:
     fig, ax = plt.subplots(figsize=(6, 6))
     _draw_floorplan(ax, polygon, floorplan_array)
-    contour = ax.contourf(grid_x, grid_y, grid_z, levels=24, cmap="viridis", alpha=0.6, zorder=1)
-    fig.colorbar(contour, ax=ax, shrink=0.8, pad=0.02, label="Elevation")
-    ax.add_collection(
-        PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="#0f172a", linewidth=2, zorder=2)
+    contour = ax.contourf(
+        grid_x,
+        grid_y,
+        grid_z,
+        levels=color_scale.levels,
+        cmap=color_scale.cmap,
+        norm=color_scale.norm,
+        alpha=0.85,
+        zorder=1,
     )
-
+    contour_lines = ax.contour(
+        grid_x,
+        grid_y,
+        grid_z,
+        levels=color_scale.levels,
+        colors="#1f2937",
+        linewidths=0.8,
+        zorder=2.5,
+    )
+    ax.clabel(contour_lines, fmt="%.1f", fontsize=7, inline=True)
+    fig.colorbar(
+        contour,
+        ax=ax,
+        shrink=0.82,
+        pad=0.02,
+        label="Elevation",
+        extend="both",
+    )
+    ax.add_collection(
+        PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="#0f172a", linewidth=2, zorder=3)
+    )
     for line in profile_lines:
         (x1, y1) = line["start"]
         (x2, y2) = line["end"]
-        ax.plot([x1, x2], [y1, y2], "w--", linewidth=1.2, alpha=0.6, zorder=3)
-
+        ax.plot([x1, x2], [y1, y2], color="white", linestyle="--", linewidth=1.1, alpha=0.7, zorder=4)
     ax.set_title(title)
     ax.set_aspect("equal", adjustable="box")
     return to_base64(fig)
@@ -259,19 +364,45 @@ def plot_profiles(
     profile_lines: Sequence[Dict[str, Tuple[float, float]]],
     points: Sequence[Point3D],
     title: str,
+    color_scale: ColorScale,
     floorplan_array: Optional[np.ndarray] = None,
 ) -> str:
     fig, ax = plt.subplots(figsize=(6, 6))
     _draw_floorplan(ax, polygon, floorplan_array)
-    ax.contourf(grid_x, grid_y, grid_z, levels=32, cmap="coolwarm", alpha=0.35, zorder=1)
+    contour = ax.contourf(
+        grid_x,
+        grid_y,
+        grid_z,
+        levels=color_scale.levels,
+        cmap=color_scale.cmap,
+        norm=color_scale.norm,
+        alpha=0.4,
+        zorder=1,
+    )
     ax.add_collection(
         PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="#2563eb", linewidth=2, zorder=2)
     )
     for line in profile_lines:
         (x1, y1) = line["start"]
         (x2, y2) = line["end"]
-        ax.plot([x1, x2], [y1, y2], color="#f97316", linewidth=1.4, alpha=0.8, zorder=3)
-    ax.scatter([p.x for p in points], [p.y for p in points], c="#0f172a", s=18, zorder=4)
+        ax.plot([x1, x2], [y1, y2], color="#f97316", linewidth=1.2, alpha=0.85, zorder=3)
+    ax.scatter(
+        [p.x for p in points],
+        [p.y for p in points],
+        c="#0f172a",
+        edgecolors="white",
+        linewidths=0.5,
+        s=32,
+        zorder=4,
+    )
+    fig.colorbar(
+        contour,
+        ax=ax,
+        shrink=0.82,
+        pad=0.02,
+        label="Elevation",
+        extend="both",
+    )
     ax.set_title(title)
     ax.set_aspect("equal", adjustable="box")
     return to_base64(fig)
@@ -299,24 +430,48 @@ class FameUIPipeline:
             np.linspace(min_y, max_y, self.grid_resolution),
         )
 
-        interpolated = griddata(points_array, z_array, (grid_x, grid_y), method="cubic")
+        interpolated = _interpolate_surface(points_array, z_array, grid_x, grid_y)
 
-        # Mask everything outside the polygon
         mask = ~path.contains_points(np.vstack((grid_x.flatten(), grid_y.flatten())).T)
-        masked_grid = np.ma.array(interpolated, mask=mask.reshape(grid_x.shape))
+        mask = mask.reshape(grid_x.shape)
+        interpolated = np.where(mask, np.nan, interpolated)
+        masked_grid = np.ma.array(interpolated, mask=mask)
 
         profile_lines = generate_profile_lines(polygon)
         floorplan_array = _decode_floorplan(payload.floorplan_image)
+        color_scale = _compute_color_scale(masked_grid)
 
         images = {
             "heatmap": plot_heatmap(
-                grid_x, grid_y, masked_grid, polygon, payload.points, "FP1 Elevation Heatmap", floorplan_array
+                grid_x,
+                grid_y,
+                masked_grid,
+                polygon,
+                payload.points,
+                "FP1 Elevation Heatmap",
+                color_scale,
+                floorplan_array,
             ),
             "repair_plan": plot_repair_plan(
-                grid_x, grid_y, masked_grid, polygon, profile_lines, "Contour Map", floorplan_array
+                grid_x,
+                grid_y,
+                masked_grid,
+                polygon,
+                profile_lines,
+                "Contour Map",
+                color_scale,
+                floorplan_array,
             ),
             "profiles": plot_profiles(
-                grid_x, grid_y, masked_grid, polygon, profile_lines, payload.points, "Profile Layout", floorplan_array
+                grid_x,
+                grid_y,
+                masked_grid,
+                polygon,
+                profile_lines,
+                payload.points,
+                "Profile Layout",
+                color_scale,
+                floorplan_array,
             ),
         }
 
