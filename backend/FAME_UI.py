@@ -4,22 +4,23 @@ from __future__ import annotations
 import base64
 import dataclasses
 import math
-import time
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Dict, Iterable, List, Sequence, Tuple, Optional
 
 import numpy as np
 import logging
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, make_response
 from flask_cors import CORS
 from matplotlib import pyplot as plt
 from matplotlib.path import Path
 from matplotlib.patches import Polygon as MplPolygon
 from matplotlib.collections import PatchCollection
 from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
+import matplotlib.patheffects as PathEffects
 from PIL import Image
 from scipy.interpolate import griddata
+from scipy.spatial import Delaunay
 
 # Use non-interactive backend so the service can render off-screen
 plt.ioff()
@@ -131,36 +132,83 @@ def _summarize_grid(label: str, grid: np.ndarray) -> str:
     return f"{label}: shape={grid.shape} range=[{finite.min():.3f},{finite.max():.3f}]"
 
 
-def _generate_hello_image(tag: str) -> str:
-    """Return a base64 PNG that clearly indicates the active revision."""
-    fig, ax = plt.subplots(figsize=(4, 3))
-    ax.set_facecolor('#141414')
-    ax.text(
-        0.5,
-        0.55,
-        'HELLO',
-        color='lime',
-        fontsize=48,
-        fontweight='bold',
-        ha='center',
-        va='center',
-    )
-    ax.text(
-        0.5,
-        0.2,
-        tag,
-        color='white',
-        fontsize=14,
-        ha='center',
-        va='center',
-    )
-    ax.axis('off')
+def _corsify_response(response):
+    """Attach the CORS headers expected by the FP1 frontend."""
+    origin = request.headers.get('Origin', '*') if request else '*'
+    response.headers['Access-Control-Allow-Origin'] = origin
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+    response.headers['Access-Control-Max-Age'] = '3600'
+    return response
 
-    buffer = BytesIO()
-    fig.savefig(buffer, format='png', bbox_inches='tight', facecolor='#141414')
-    plt.close(fig)
-    buffer.seek(0)
-    return base64.b64encode(buffer.read()).decode('utf-8')
+
+def _annotate_points(ax: plt.Axes, points: Sequence[Point3D]) -> None:
+    for point in points:
+        color = '#166534' if point.z > 0 else ('#991b1b' if point.z < 0 else '#1d4ed8')
+        marker_edge = '#111827'
+        label = f"{point.z:+.1f}"
+        if point.label:
+            label += f" ({point.label})"
+
+        ax.scatter(point.x, point.y, c=color, edgecolors=marker_edge, linewidths=0.8, s=36, zorder=5)
+        ax.text(
+            point.x,
+            point.y + 0.8,
+            label,
+            color=color,
+            fontsize=9,
+            fontweight='bold',
+            ha='center',
+            va='bottom',
+            zorder=6,
+            path_effects=[PathEffects.withStroke(linewidth=1.6, foreground='white')],
+        )
+
+
+def _generate_profile_lines_from_boundary(boundary: Sequence[BoundaryPoint], polygon_path: Path) -> List[Dict[str, Tuple[float, float]]]:
+    coords = [(point.x, point.y) for point in boundary]
+    if len(coords) < 3:
+        return []
+
+    pts = np.array(coords, dtype=float)
+    unique_pts = np.unique(pts, axis=0)
+    if unique_pts.shape[0] < 3:
+        return []
+
+    try:
+        delaunay = Delaunay(unique_pts)
+    except Exception:
+        # Fall back to simple polygon edges if triangulation fails
+        lines = []
+        for idx in range(len(coords)):
+            start = coords[idx]
+            end = coords[(idx + 1) % len(coords)]
+            lines.append({'start': start, 'end': end})
+        return lines
+
+    edges = set()
+    for simplex in delaunay.simplices:
+        for i in range(3):
+            a = simplex[i]
+            b = simplex[(i + 1) % 3]
+            edge = tuple(sorted((a, b)))
+            edges.add(edge)
+
+    lines: List[Dict[str, Tuple[float, float]]] = []
+    for a, b in edges:
+        start = tuple(unique_pts[a])
+        end = tuple(unique_pts[b])
+        midpoint = ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
+        if polygon_path.contains_point(midpoint):
+            lines.append({'start': start, 'end': end})
+
+    # Always include polygon edges to reinforce the footprint
+    for idx in range(len(coords)):
+        start = coords[idx]
+        end = coords[(idx + 1) % len(coords)]
+        lines.append({'start': start, 'end': end})
+
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -182,66 +230,6 @@ def polygon_bounds(polygon: np.ndarray) -> Tuple[float, float, float, float]:
     min_y = float(np.min(polygon[:, 1]))
     max_y = float(np.max(polygon[:, 1]))
     return min_x, max_x, min_y, max_y
-
-
-def horizontal_intersections(polygon: np.ndarray, y_value: float) -> List[float]:
-    """Return sorted x-intersections between a horizontal line and the polygon."""
-    intersections: List[float] = []
-    for (x1, y1), (x2, y2) in zip(polygon[:-1], polygon[1:]):
-        if (y1 <= y_value < y2) or (y2 <= y_value < y1):
-            if math.isclose(y1, y2):
-                continue
-            ratio = (y_value - y1) / (y2 - y1)
-            x_cross = x1 + ratio * (x2 - x1)
-            intersections.append(x_cross)
-    intersections.sort()
-    return intersections
-
-
-def vertical_intersections(polygon: np.ndarray, x_value: float) -> List[float]:
-    """Return sorted y-intersections between a vertical line and the polygon."""
-    intersections: List[float] = []
-    for (x1, y1), (x2, y2) in zip(polygon[:-1], polygon[1:]):
-        if (x1 <= x_value < x2) or (x2 <= x_value < x1):
-            if math.isclose(x1, x2):
-                continue
-            ratio = (x_value - x1) / (x2 - x1)
-            y_cross = y1 + ratio * (y2 - y1)
-            intersections.append(y_cross)
-    intersections.sort()
-    return intersections
-
-
-def generate_profile_lines(
-    polygon: np.ndarray,
-    num_horizontal: int = 4,
-    num_vertical: int = 4,
-) -> List[Dict[str, Tuple[float, float]]]:
-    """Generate profile lines that start and end on the polygon boundary."""
-    min_x, max_x, min_y, max_y = polygon_bounds(polygon)
-    results: List[Dict[str, Tuple[float, float]]] = []
-
-    horizontal_levels = np.linspace(min_y, max_y, num_horizontal + 2)[1:-1]
-    for y in horizontal_levels:
-        xs = horizontal_intersections(polygon, y)
-        for start_x, end_x in zip(xs[0::2], xs[1::2]):
-            results.append({
-                "orientation": "horizontal",
-                "start": (start_x, y),
-                "end": (end_x, y),
-            })
-
-    vertical_levels = np.linspace(min_x, max_x, num_vertical + 2)[1:-1]
-    for x in vertical_levels:
-        ys = vertical_intersections(polygon, x)
-        for start_y, end_y in zip(ys[0::2], ys[1::2]):
-            results.append({
-                "orientation": "vertical",
-                "start": (x, start_y),
-                "end": (x, end_y),
-            })
-
-    return results
 
 
 # ---------------------------------------------------------------------------
@@ -362,16 +350,10 @@ def plot_heatmap(
     ax.add_collection(
         PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="black", linewidth=1.5, zorder=2)
     )
-    ax.scatter(
-        [p.x for p in points],
-        [p.y for p in points],
-        c="#111827",
-        edgecolors="white",
-        linewidths=0.6,
-        s=36,
-        zorder=3,
-    )
+    _annotate_points(ax, points)
     ax.set_title(title)
+    ax.set_xlabel('Left to Right')
+    ax.set_ylabel('Bottom to Top')
     ax.set_aspect("equal", adjustable="box")
     return to_base64(fig)
 
@@ -382,6 +364,7 @@ def plot_repair_plan(
     grid_z: np.ndarray,
     polygon: np.ndarray,
     profile_lines: Sequence[Dict[str, Tuple[float, float]]],
+    points: Sequence[Point3D],
     title: str,
     color_scale: ColorScale,
     floorplan_array: Optional[np.ndarray] = None,
@@ -422,8 +405,11 @@ def plot_repair_plan(
     for line in profile_lines:
         (x1, y1) = line["start"]
         (x2, y2) = line["end"]
-        ax.plot([x1, x2], [y1, y2], color="white", linestyle="--", linewidth=1.1, alpha=0.7, zorder=4)
+        ax.plot([x1, x2], [y1, y2], color="white", linestyle="--", linewidth=1.1, alpha=0.35, zorder=4)
+    _annotate_points(ax, points)
     ax.set_title(title)
+    ax.set_xlabel('Left to Right')
+    ax.set_ylabel('Bottom to Top')
     ax.set_aspect("equal", adjustable="box")
     return to_base64(fig)
 
@@ -435,6 +421,7 @@ def plot_profiles(
     polygon: np.ndarray,
     profile_lines: Sequence[Dict[str, Tuple[float, float]]],
     points: Sequence[Point3D],
+    boundary: Sequence[BoundaryPoint],
     title: str,
     color_scale: ColorScale,
     floorplan_array: Optional[np.ndarray] = None,
@@ -457,16 +444,16 @@ def plot_profiles(
     for line in profile_lines:
         (x1, y1) = line["start"]
         (x2, y2) = line["end"]
-        ax.plot([x1, x2], [y1, y2], color="#f97316", linewidth=1.2, alpha=0.85, zorder=3)
-    ax.scatter(
-        [p.x for p in points],
-        [p.y for p in points],
-        c="#0f172a",
-        edgecolors="white",
-        linewidths=0.5,
-        s=32,
+        ax.plot([x1, x2], [y1, y2], color="#111827", linewidth=0.7, alpha=0.55, zorder=3)
+    boundary_coords = [(p.x, p.y) for p in boundary]
+    ax.plot(
+        [pt[0] for pt in boundary_coords + boundary_coords[:1]],
+        [pt[1] for pt in boundary_coords + boundary_coords[:1]],
+        color='#0f172a',
+        linewidth=2,
         zorder=4,
     )
+    _annotate_points(ax, points)
     fig.colorbar(
         contour,
         ax=ax,
@@ -476,6 +463,8 @@ def plot_profiles(
         extend="both",
     )
     ax.set_title(title)
+    ax.set_xlabel('Left to Right')
+    ax.set_ylabel('Bottom to Top')
     ax.set_aspect("equal", adjustable="box")
     return to_base64(fig)
 
@@ -533,7 +522,7 @@ class FameUIPipeline:
         print(f"[FAME_UI] Masked cells={int(mask.sum())}")
         print("[FAME_UI] %s" % _summarize_grid('Masked grid', masked_grid.filled(np.nan)))
 
-        profile_lines = generate_profile_lines(polygon)
+        profile_lines = _generate_profile_lines_from_boundary(payload.boundary, path)
         logger.info('Generated %d profile lines', len(profile_lines))
         print(f"[FAME_UI] Generated {len(profile_lines)} profile lines")
         floorplan_array = _decode_floorplan(payload.floorplan_image)
@@ -561,6 +550,7 @@ class FameUIPipeline:
                 masked_grid,
                 polygon,
                 profile_lines,
+                payload.points,
                 "Contour Map",
                 color_scale,
                 floorplan_array,
@@ -572,6 +562,7 @@ class FameUIPipeline:
                 polygon,
                 profile_lines,
                 payload.points,
+                payload.boundary,
                 "Profile Layout",
                 color_scale,
                 floorplan_array,
@@ -590,31 +581,28 @@ CORS(app, resources={r"/api/fame/run": {"origins": "*"}}, supports_credentials=F
 pipeline = FameUIPipeline()
 
 
-<<<<<<< HEAD
-@app.route("/api/fame/run", methods=["POST"])
+@app.route("/api/fame/run", methods=["POST", "OPTIONS"])
 def run_analysis():
-    logger.info("HELLO from new revision")
+    if request.method == "OPTIONS":
+        return _corsify_response(make_response("", 204))
+
     try:
         logger.info('run_analysis invoked from %s', request.remote_addr)
-        print(f"[FAME_UI] HELLO test response for request from {request.remote_addr}")
+        payload = AnalysisPayload.from_request(request.get_json(force=True))
+        result = pipeline.run(payload)
 
-        hello_tag = time.strftime('Deployed %Y-%m-%d %H:%M:%S UTC', time.gmtime())
-        hello_image = _generate_hello_image(hello_tag)
-
-        response_payload = {
-            "images": {
-                "heatmap": f"data:image/png;base64,{hello_image}",
-                "repair_plan": f"data:image/png;base64,{hello_image}",
-                "profiles": f"data:image/png;base64,{hello_image}",
-            },
-            "profileLines": [],
-            "unit": "test",
-        }
-
-        return jsonify(response_payload)
+        response = jsonify({
+            "images": result.images,
+            "profileLines": result.profile_lines,
+            "unit": payload.unit,
+        })
+        response.status_code = 200
+        return _corsify_response(response)
     except Exception as exc:  # pragma: no cover - top-level guard
         logger.exception('run_analysis failed: %s', exc)
-        return jsonify({"error": str(exc)}), 400
+        response = jsonify({"error": str(exc)})
+        response.status_code = 400
+        return _corsify_response(response)
 
 
 if __name__ == "__main__":  # pragma: no cover
