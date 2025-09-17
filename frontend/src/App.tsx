@@ -27,7 +27,7 @@ const dataBaseUrl = (import.meta.env.BASE_URL || "") + "data"
 const TEXT_URL = dataBaseUrl + "/FAME_TEXT.json"
 const EQUATIONS_URL = dataBaseUrl + "/FAME_EQUATIONS.json"
 
-const DEV_BUILD_VERSION = "Version 23"
+const DEV_BUILD_VERSION = "Version 24"
 
 
 type LoadState<T> = {

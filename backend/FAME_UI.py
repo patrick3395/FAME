@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import dataclasses
 import math
+import time
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Dict, Iterable, List, Sequence, Tuple, Optional
@@ -128,6 +129,38 @@ def _summarize_grid(label: str, grid: np.ndarray) -> str:
     if finite.size == 0:
         return f"{label}: empty"
     return f"{label}: shape={grid.shape} range=[{finite.min():.3f},{finite.max():.3f}]"
+
+
+def _generate_hello_image(tag: str) -> str:
+    """Return a base64 PNG that clearly indicates the active revision."""
+    fig, ax = plt.subplots(figsize=(4, 3))
+    ax.set_facecolor('#141414')
+    ax.text(
+        0.5,
+        0.55,
+        'HELLO',
+        color='lime',
+        fontsize=48,
+        fontweight='bold',
+        ha='center',
+        va='center',
+    )
+    ax.text(
+        0.5,
+        0.2,
+        tag,
+        color='white',
+        fontsize=14,
+        ha='center',
+        va='center',
+    )
+    ax.axis('off')
+
+    buffer = BytesIO()
+    fig.savefig(buffer, format='png', bbox_inches='tight', facecolor='#141414')
+    plt.close(fig)
+    buffer.seek(0)
+    return base64.b64encode(buffer.read()).decode('utf-8')
 
 
 # ---------------------------------------------------------------------------
@@ -557,21 +590,28 @@ CORS(app, resources={r"/api/fame/run": {"origins": "*"}}, supports_credentials=F
 pipeline = FameUIPipeline()
 
 
+<<<<<<< HEAD
 @app.route("/api/fame/run", methods=["POST"])
 def run_analysis():
     logger.info("HELLO from new revision")
     try:
         logger.info('run_analysis invoked from %s', request.remote_addr)
-        print(f"[FAME_UI] run_analysis invoked from {request.remote_addr}")
-        payload = AnalysisPayload.from_request(request.get_json(force=True))
-        result = pipeline.run(payload)
-        logger.info('run_analysis completed successfully')
-        print("[FAME_UI] run_analysis completed successfully")
-        return jsonify({
-            "images": result.images,
-            "profileLines": result.profile_lines,
-            "unit": payload.unit,
-        })
+        print(f"[FAME_UI] HELLO test response for request from {request.remote_addr}")
+
+        hello_tag = time.strftime('Deployed %Y-%m-%d %H:%M:%S UTC', time.gmtime())
+        hello_image = _generate_hello_image(hello_tag)
+
+        response_payload = {
+            "images": {
+                "heatmap": f"data:image/png;base64,{hello_image}",
+                "repair_plan": f"data:image/png;base64,{hello_image}",
+                "profiles": f"data:image/png;base64,{hello_image}",
+            },
+            "profileLines": [],
+            "unit": "test",
+        }
+
+        return jsonify(response_payload)
     except Exception as exc:  # pragma: no cover - top-level guard
         logger.exception('run_analysis failed: %s', exc)
         return jsonify({"error": str(exc)}), 400
