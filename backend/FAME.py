@@ -495,7 +495,13 @@ def _process_initial_graphics_payload(request_data):
     spacing = float(request_data.get('spacing', 1))
     unit = request_data.get('unit', 'ft')
 
+    print(
+        f"[initial_graphics] boundary_points={len(boundary_data)} "
+        f"measurement_points={len(point_data)} spacing={spacing} unit='{unit}'"
+    )
+
     if len(boundary_data) < 3 or len(point_data) == 0:
+        print("[initial_graphics] Invalid payload received; returning error response")
         return jsonify({'error': 'Boundary and points data are required to generate graphics.'}), 400
 
     boundary_array = np.array([(float(p['x']), float(p['y'])) for p in boundary_data], dtype=np.float32)
@@ -515,6 +521,7 @@ def _process_initial_graphics_payload(request_data):
     z = points_array[:, 2].astype(np.float32)
 
     grid_size = max(int(max(boundary_array[:, 0].ptp(), boundary_array[:, 1].ptp()) * (2 / max(spacing, 0.1))), 50)
+    print(f"[initial_graphics] Calculated interpolation grid size={grid_size}")
     xi, yi, zi = optimized_interpolate_grid(x, y, z, grid_size=grid_size, method='linear' if len(point_data) < 10 else 'cubic')
 
     min_z = float(np.nanmin(zi))
@@ -587,6 +594,9 @@ def _process_initial_graphics_payload(request_data):
             'name': naming_map.get(name, name),
             'image': f'data:image/png;base64,{image_b64}'
         })
+
+    generated_names = [item['name'] for item in encoded_graphics]
+    print(f"[initial_graphics] Generated image payloads: {generated_names}")
 
     response_payload = {
         'unit': unit,
@@ -924,7 +934,11 @@ def save_singular_plot_and_upload(optimizer_instance, figure, name, folder_id):
 def optimized_save_plot_and_upload(optimizer_instance, x, y, z, point_id, ax, figure, name, 
                                   folder_id, scale_factor, request_data, global_vars):
     """Optimized save and upload with caching and compression"""
-    
+    print(
+        f"[save_plot] Preparing upload for '{name}' to folder '{folder_id}' "
+        f"with scale_factor={scale_factor}"
+    )
+
     json_key = optimizer_instance.get_cached_credentials('engineering-support-doc', 
                                                          'engineering-414319-561d04e6c03a.json')
     service = optimizer_instance.get_drive_service(json_key)
@@ -1013,19 +1027,26 @@ def optimized_save_plot_and_upload(optimizer_instance, x, y, z, point_id, ax, fi
     
     file_metadata = {'name': name, 'parents': [folder_id]}
     media = MediaIoBaseUpload(buf_final, mimetype='image/jpeg')
-    
+
     query = f"name = '{name}' and '{folder_id}' in parents and trashed = false"
     response = service.files().list(q=query, fields='files(id)').execute()
-    for file in response.get('files', []):
+    existing_files = response.get('files', [])
+    if existing_files:
+        print(f"[save_plot] Removing {len(existing_files)} existing file(s) for '{name}'")
+    for file in existing_files:
         service.files().delete(fileId=file['id']).execute()
-    
+
     file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
     file_id = file.get('id')
-    
+    print(f"[save_plot] Created new file_id={file_id} for '{name}'")
+
     service.permissions().create(
         fileId=file_id,
         body={'type': 'anyone', 'role': 'reader'}
     ).execute()
+    print(f"[save_plot] Set public permissions for '{name}'")
+
+    print(f"[save_plot] Upload complete for '{name}' (file_id={file_id})")
     
     plt.close(figure)
     return file_id
@@ -1414,6 +1435,7 @@ def plot_line_on_heatmap(ax, ax2, line_data, calc_result, config, plot_type,
 def script_run(input_data):
     """Main optimized script run function"""
     try:
+        print("[script_run] Starting execution")
         global_vars = {
             'min_x': None, 'max_x': None,
             'min_y': None, 'max_y': None,
@@ -1422,22 +1444,27 @@ def script_run(input_data):
             'contourf': None, 'contourf_comp': None,
             'color_check': None
         }
-        
+
         request_data = input_data.get_json(silent=True)
-        
+
+        if not request_data:
+            print("[script_run] No JSON payload detected in request")
+
         if request_data and 'boundary' in request_data and 'points' in request_data:
+            print("[script_run] Delegating to initial graphics payload handler")
             return _process_initial_graphics_payload(request_data)
 
         json_key = optimizer.get_cached_credentials(
             'engineering-support-doc',
             'engineering-414319-561d04e6c03a.json'
         )
-        
+
         sa = optimizer.get_sheets_service(json_key)
-        
+
         spreadsheet_id = request_data['spreadsheetId']
+        print(f"[script_run] Using spreadsheetId={spreadsheet_id}")
         sheet = sa.open_by_key(spreadsheet_id)
-        
+
         ws = sheet.worksheet('FP0')
         config = {
             'total_point_per_profile': int(ws.acell('K11').value),
@@ -1445,7 +1472,12 @@ def script_run(input_data):
             'boundary_points': int(ws.acell('K12').value),
             'scale_factor': int(ws.acell('E10').value)
         }
-        
+        print(
+            "[script_run] Config -> total_points={total_point_per_profile} "
+            "effective_length={effective_length} boundary_points={boundary_points} "
+            "scale_factor={scale_factor}".format(**config)
+        )
+
         ws = sheet.worksheet('1-EFE')
         values = ws.get_all_values()
         headers = values[0]
@@ -1458,18 +1490,23 @@ def script_run(input_data):
         
         x -= x.min()
         y -= y.min()
-        
+
         xi, yi, zi = optimized_interpolate_grid(x, y, z, grid_size=100)
-        
+
         all_data = [d for d in data if d['FP1 X (ft)'] != '']
         x_all = np.array([float(d['FP1 X (ft)']) for d in all_data], dtype=np.float32)
         y_all = np.array([float(d['FP1 Y (ft)']) for d in all_data], dtype=np.float32)
         z_all = np.array([float(d['FP1 Z (in)']) for d in all_data], dtype=np.float32)
         point_id = np.array([d['FP1 ID'] for d in all_data if d['FP1 Z (in)'] != ''])
-        
+
+        print(
+            f"[script_run] Loaded {len(fp1_data)} FP1 points for interpolation and "
+            f"{len(all_data)} total FP points"
+        )
+
         x_all -= x_all.min()
         y_all -= y_all.min()
-        
+
         global_vars.update({
             'min_x': xi.min(),
             'max_x': xi.max(),
@@ -1481,10 +1518,17 @@ def script_run(input_data):
             'yi': yi,
             'zi': zi
         })
-        
+
+        print(
+            "[script_run] Interpolation ranges -> "
+            f"x[{global_vars['min_x']:.2f}, {global_vars['max_x']:.2f}] "
+            f"y[{global_vars['min_y']:.2f}, {global_vars['max_y']:.2f}] "
+            f"z_bounds[{global_vars['min_z_rounded']:.2f}, {global_vars['max_z_rounded']:.2f}]"
+        )
+
         fp2_data = [d for d in data if d['FP2 ID'] not in ['G', 'C'] 
                    and d['FP2 Z (in)'] != '' and d['FP2 Z (in)'] != 'NO DATA']
-        
+
         comparison_flag = False
         custom_diff_cmap = None
         diff = None
@@ -1535,7 +1579,10 @@ def script_run(input_data):
             }
             
             custom_diff_cmap = LinearSegmentedColormap('custom_diff_cmap', cdict_diff)
-        
+            print(f"[script_run] Comparison enabled with {len(fp2_data)} FP2 points")
+        else:
+            print("[script_run] No FP2 dataset detected; skipping comparison plot")
+
         floorplan_data = request_data
         x_offset = floorplan_data['centerXShape'] - floorplan_data['centerXCell']
         y_offset = floorplan_data['centerYShape'] - floorplan_data['centerYCell']
@@ -1553,13 +1600,14 @@ def script_run(input_data):
         right_boundary = [(offset_plot_right, y) for y in y_range]
         top_boundary = [(x, offset_y_plot_bottom) for x in x_range]
         bottom_boundary = [(x, offset_y_plot) for x in x_range]
-        
+
         boundary_points = list(set(left_boundary + right_boundary + top_boundary + bottom_boundary))
-        
+        print(f"[script_run] Constructed {len(boundary_points)} boundary points for profile generation")
+
         min_z = zi.min()
         max_z = zi.max()
         zero_norm = (0 - global_vars['min_z_rounded']) / (global_vars['max_z_rounded'] - global_vars['min_z_rounded'])
-        
+
         cdict = {
             'red': [(0.0, 1.0, 1.0), (zero_norm, 1.0, 1.0), (1.0, 0.0, 0.0)],
             'green': [(0.0, 0.0, 0.0), (zero_norm, 1.0, 1.0), (1.0, 1.0, 1.0)],
@@ -1571,7 +1619,7 @@ def script_run(input_data):
         plot_names = ['Mesh 3D', 'Mesh Contour A', 'Mesh Contour B', 'Mesh Repair Plan', 
                      'Mesh All Profiles', 'Mesh Deflection Exceeds', 'Mesh Tilt Exceeds', 
                      'Mesh Singular Plots', 'Overlay', 'Comparison']
-        
+
         plots = {}
         for name in plot_names:
             if name == 'Mesh 3D':
@@ -1579,6 +1627,7 @@ def script_run(input_data):
             else:
                 fig, ax = plt.subplots(figsize=(10, 10))
             plots[name] = {'fig': fig, 'ax': ax}
+        print(f"[script_run] Initialized plot canvases: {plot_names}")
         
         for name in plot_names:
             if name != 'Mesh 3D':
@@ -1729,6 +1778,7 @@ def script_run(input_data):
         ax = plots['Mesh All Profiles']['ax']
         line_ids = add_profile_lines_optimized(ax, boundary_points, left_boundary, 
                                               right_boundary, bottom_boundary, top_boundary)
+        print(f"[script_run] Profile generator returned {len(line_ids)} line ids")
         mesh_map_name_profiles = '3 - All Profiles.jpeg'
         image_id = optimized_save_plot_and_upload(
             optimizer, x_all, y_all, z_all, point_id,
@@ -1748,13 +1798,15 @@ def script_run(input_data):
         if keep_running == 'Initial Graphics':
             ws2.update('K7', [['Complete']])
             return jsonify(imageURLs)
-        
+
         ws_ob = sheet.worksheet('2-EFE')
         range_to_clear = 'P7:DA88'
         ws_ob.batch_clear([range_to_clear])
-        
+        print(f"[script_run] Cleared range {range_to_clear} on worksheet 2-EFE")
+
         ws2.update('K7', [['Line Analysis Started - Batch Processing']])
-        
+        print("[script_run] Triggered batch processing workflow")
+
         calculation_results = batch_process_all_lines(
             line_ids=line_ids,
             xi=xi, yi=yi, zi=zi,
@@ -1768,8 +1820,11 @@ def script_run(input_data):
             x_all=x_all, y_all=y_all, z_all=z_all, point_id=point_id,
             optimizer=optimizer, request_data=request_data, global_vars=global_vars
         )
-        
+
+        print(f"[script_run] Batch processing produced {len(calculation_results)} calculation rows")
+
         ws2.update('K7', [['Batch Processing Complete']])
+        print("[script_run] Batch processing marked as complete")
         
         mesh_map_name_deflection = '4 - Failed Deflections.jpeg'
         image_id = optimized_save_plot_and_upload(
@@ -1796,10 +1851,11 @@ def script_run(input_data):
         ws = sheet.worksheet('GRAPHICS')
         ws.update_acell('H7', formula)
         imageURLs['failed_tilt'] = image_url
-        
+
         ws2.update('K7', [['Complete']])
+        print("[script_run] Script run completed successfully")
         return jsonify(imageURLs)
-        
+
     except Exception as e:
         print(f"Error in script_run: {e}")
         traceback.print_exc()

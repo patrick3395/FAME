@@ -467,6 +467,16 @@ class FameUIPipeline:
             payload.unit,
             bool(payload.floorplan_image),
         )
+        print(
+            "[FAME_UI] Processing payload -> boundary=%s points=%s spacing=%.3f %s floorplan=%s"
+            % (
+                _summarize_boundary(payload.boundary),
+                _summarize_points(payload.points),
+                payload.spacing,
+                payload.unit,
+                bool(payload.floorplan_image),
+            )
+        )
 
         points_array = np.array([[p.x, p.y] for p in payload.points])
         z_array = np.array([p.z for p in payload.points])
@@ -479,6 +489,7 @@ class FameUIPipeline:
 
         interpolated = _interpolate_surface(points_array, z_array, grid_x, grid_y)
         logger.info(_summarize_grid('Interpolated grid', interpolated))
+        print("[FAME_UI] %s" % _summarize_grid('Interpolated grid', interpolated))
 
         mask = ~path.contains_points(np.vstack((grid_x.flatten(), grid_y.flatten())).T)
         mask = mask.reshape(grid_x.shape)
@@ -486,12 +497,19 @@ class FameUIPipeline:
         masked_grid = np.ma.array(interpolated, mask=mask)
         logger.info('Masked cells=%d', int(mask.sum()))
         logger.info(_summarize_grid('Masked grid', masked_grid.filled(np.nan)))
+        print(f"[FAME_UI] Masked cells={int(mask.sum())}")
+        print("[FAME_UI] %s" % _summarize_grid('Masked grid', masked_grid.filled(np.nan)))
 
         profile_lines = generate_profile_lines(polygon)
         logger.info('Generated %d profile lines', len(profile_lines))
+        print(f"[FAME_UI] Generated {len(profile_lines)} profile lines")
         floorplan_array = _decode_floorplan(payload.floorplan_image)
         color_scale = _compute_color_scale(masked_grid)
         logger.info('Color scale: vmin=%.3f vmax=%.3f levels=%d', color_scale.vmin, color_scale.vmax, len(color_scale.levels))
+        print(
+            "[FAME_UI] Color scale -> vmin=%.3f vmax=%.3f levels=%d"
+            % (color_scale.vmin, color_scale.vmax, len(color_scale.levels))
+        )
 
         images = {
             "heatmap": plot_heatmap(
@@ -543,9 +561,11 @@ pipeline = FameUIPipeline()
 def run_analysis():
     try:
         logger.info('run_analysis invoked from %s', request.remote_addr)
+        print(f"[FAME_UI] run_analysis invoked from {request.remote_addr}")
         payload = AnalysisPayload.from_request(request.get_json(force=True))
         result = pipeline.run(payload)
         logger.info('run_analysis completed successfully')
+        print("[FAME_UI] run_analysis completed successfully")
         return jsonify({
             "images": result.images,
             "profileLines": result.profile_lines,
