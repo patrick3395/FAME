@@ -68,6 +68,8 @@ VITE_FAME_API_ENDPOINT="https://your-service-xyz.a.run.app/api/fame/run"
   listens on `$PORT`, which satisfies Cloud Run requirements.
 - Add any production secrets (Google credentials, spreadsheet IDs) as Cloud Run environment
   variables or Secret Manager references rather than hard-coding them in source.
+- When wiring Cloud Build triggers, choose the **Dockerfile** option and point to
+  `backend/Dockerfile` so new pushes rebuild the container automatically.
 
 ## Contributing workflow
 
