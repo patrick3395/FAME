@@ -1,15 +1,9 @@
 steps:
   - name: gcr.io/cloud-builders/docker
     args:
-      - build
-      - -t
-      - us-south1-docker.pkg.dev/engineering-414319/fame/backend:
-      - -f
-      - backend/Dockerfile
-      - backend
+      ["build", "-t", "us-south1-docker.pkg.dev/engineering-414319/fame/backend:", "-f", "backend/Dockerfile", "backend"]
   - name: gcr.io/cloud-builders/docker
     args:
-      - push
-      - us-south1-docker.pkg.dev/engineering-414319/fame/backend:
+      ["push", "us-south1-docker.pkg.dev/engineering-414319/fame/backend:"]
 images:
   - us-south1-docker.pkg.dev/engineering-414319/fame/backend:
