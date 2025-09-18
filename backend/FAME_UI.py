@@ -369,7 +369,7 @@ def _autocrop_floorplan(image: np.ndarray) -> np.ndarray:
     return crop
 
 
-def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional[np.ndarray], alpha: float = 0.9):
+def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional[np.ndarray], alpha: float = 0.5):
     if floorplan_array is None:
         return
 
@@ -452,7 +452,7 @@ def plot_heatmap(
         cmap=color_scale.cmap,
         norm=color_scale.norm,
         zorder=1,
-        alpha=0.35,
+        alpha=0.0,
     )
     _draw_floorplan(ax, polygon, floorplan_array)
     cbar = fig.colorbar(
@@ -502,7 +502,7 @@ def plot_repair_plan(
         levels=color_scale.levels,
         cmap=color_scale.cmap,
         norm=color_scale.norm,
-        alpha=0.35,
+        alpha=0.0,
         zorder=1,
     )
     _draw_floorplan(ax, polygon, floorplan_array)
@@ -568,7 +568,7 @@ def plot_profiles(
         levels=color_scale.levels,
         cmap=color_scale.cmap,
         norm=color_scale.norm,
-        alpha=0.35,
+        alpha=0.0,
         zorder=1,
     )
     _draw_floorplan(ax, polygon, floorplan_array)
