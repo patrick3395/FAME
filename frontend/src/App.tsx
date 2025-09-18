@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import type { ChangeEvent, MouseEvent } from "react"
+import type { ChangeEvent, MouseEvent, PointerEvent as ReactPointerEvent } from "react"
 import type {
   DataValidationRule,
   Dependency,
@@ -27,7 +27,7 @@ const dataBaseUrl = (import.meta.env.BASE_URL || "") + "data"
 const TEXT_URL = dataBaseUrl + "/FAME_TEXT.json"
 const EQUATIONS_URL = dataBaseUrl + "/FAME_EQUATIONS.json"
 
-const DEV_BUILD_VERSION = "Version 38"
+const DEV_BUILD_VERSION = "Version 48"
 const INITIAL_GRAPHICS_VERSION = 'fallback-v1'
 
 
@@ -70,6 +70,12 @@ type Fp1PreviewPayload = {
   spacing: number
   unit: string
   floorplanImage?: string | null
+}
+
+type CropVertex = {
+  id: string
+  nx: number
+  ny: number
 }
 
 type InitialGraphic = {
@@ -1066,6 +1072,19 @@ function FloorPlanSheet({
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [overlaySrc, setOverlaySrc] = useState<string | null>(null)
   const [overlayDataUrl, setOverlayDataUrl] = useState<string | null>(null)
+  const [rawOverlayDataUrl, setRawOverlayDataUrl] = useState<string | null>(null)
+  const [isCropping, setIsCropping] = useState(false)
+  const [isCropImageReady, setIsCropImageReady] = useState(false)
+  const [cropPolygon, setCropPolygon] = useState<CropVertex[]>([])
+  const [isCropPolygonClosed, setIsCropPolygonClosed] = useState(false)
+  const [cropHoverPoint, setCropHoverPoint] = useState<{ nx: number; ny: number } | null>(null)
+  const [appliedCropPolygon, setAppliedCropPolygon] = useState<CropVertex[] | null>(null)
+  const cropPolygonIdRef = useRef(1)
+  const cropStageRef = useRef<HTMLDivElement | null>(null)
+  const cropViewportRef = useRef<HTMLDivElement | null>(null)
+  const cropImageRef = useRef<HTMLImageElement | null>(null)
+  const gridAreaRef = useRef<HTMLDivElement | null>(null)
+  const overlayImageRef = useRef<HTMLImageElement | null>(null)
   const [overlayScale, setOverlayScale] = useState(1)
   const [mode, setMode] = useState<'measure' | 'border'>('measure')
   const borderIdRef = useRef(1)
@@ -1075,6 +1094,9 @@ function FloorPlanSheet({
   >([])
   const [measurements, setMeasurements] = useState<
     Array<{ id: string; x: number; y: number; nx: number; ny: number; z: number; label: string }>
+  >([])
+  const [appliedBorderPoints, setAppliedBorderPoints] = useState<
+    Array<{ id: string; x: number; y: number; nx: number; ny: number }>
   >([])
   const [isBorderClosed, setIsBorderClosed] = useState(false)
   const [showPayload, setShowPayload] = useState(false)
@@ -1086,13 +1108,22 @@ function FloorPlanSheet({
 
   const unitDisplay = unit || 'ft'
 
+  const overlayDisplaySrc = overlaySrc ?? overlayDataUrl ?? rawOverlayDataUrl
+  const cropSourceUrl = overlayDataUrl ?? rawOverlayDataUrl
+  const hasOverlayImage = Boolean(overlayDisplaySrc)
+  const canResetCrop = Boolean(
+    rawOverlayDataUrl && overlayDataUrl && rawOverlayDataUrl !== overlayDataUrl,
+  )
+  const canUseCropOutline = Boolean(appliedCropPolygon && appliedCropPolygon.length >= 3) && !isCropping
+  const clamp01 = (value: number) => Math.min(Math.max(value, 0), 1)
+
   const formatTick = (value: number) => {
     const rounded = Number.parseFloat(value.toFixed(2))
     return unitDisplay ? rounded + ' ' + unitDisplay : String(rounded)
   }
 
   useEffect(() => () => {
-    if (overlaySrc) {
+    if (overlaySrc && overlaySrc.startsWith('blob:')) {
       URL.revokeObjectURL(overlaySrc)
     }
   }, [overlaySrc])
@@ -1105,33 +1136,341 @@ function FloorPlanSheet({
     const file = event.target.files?.[0]
     if (!file) {
       setOverlaySrc((previous) => {
-        if (previous) {
+        if (previous && previous.startsWith('blob:')) {
           URL.revokeObjectURL(previous)
         }
         return null
       })
       setOverlayDataUrl(null)
+      setRawOverlayDataUrl(null)
+      setIsCropping(false)
+      setIsCropImageReady(false)
+      setCropPolygon([])
+      setIsCropPolygonClosed(false)
+      setCropHoverPoint(null)
+      cropPolygonIdRef.current = 1
+      setAppliedCropPolygon(null)
       return
     }
     const url = URL.createObjectURL(file)
     setOverlaySrc((previous) => {
-      if (previous) {
+      if (previous && previous.startsWith('blob:')) {
         URL.revokeObjectURL(previous)
       }
       return url
     })
     setOverlayScale(1)
+    setIsCropping(false)
+    setIsCropImageReady(false)
+    setCropPolygon([])
+    setIsCropPolygonClosed(false)
+    setCropHoverPoint(null)
+    cropPolygonIdRef.current = 1
+    setAppliedBorderPoints([])
+    setAppliedCropPolygon(null)
     const reader = new FileReader()
     reader.onloadend = () => {
       const result = reader.result
       if (typeof result === 'string') {
         setOverlayDataUrl(result)
+        setRawOverlayDataUrl(result)
       } else {
         setOverlayDataUrl(null)
+        setRawOverlayDataUrl(null)
       }
     }
+
     reader.readAsDataURL(file)
   }
+
+  const handleOpenCropper = () => {
+    if (!cropSourceUrl) {
+      return
+    }
+    setIsCropping(true)
+    setIsCropImageReady(false)
+    setCropHoverPoint(null)
+    if (cropPolygon.length === 0) {
+      cropPolygonIdRef.current = 1
+      setIsCropPolygonClosed(false)
+    }
+  }
+
+  const handleCancelCrop = () => {
+    setIsCropping(false)
+    setIsCropImageReady(false)
+    setCropHoverPoint(null)
+  }
+
+  const handleCropStagePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!isCropImageReady || isCropPolygonClosed) {
+      return
+    }
+    const viewport = cropViewportRef.current
+    if (!viewport) {
+      return
+    }
+    const bounds = viewport.getBoundingClientRect()
+    if (bounds.width === 0 || bounds.height === 0) {
+      return
+    }
+    const nx = (event.clientX - bounds.left) / bounds.width
+    const ny = (event.clientY - bounds.top) / bounds.height
+    if (nx < 0 || nx > 1 || ny < 0 || ny > 1) {
+      return
+    }
+    event.preventDefault()
+    const clampedX = clamp01(nx)
+    const clampedY = clamp01(ny)
+    setCropPolygon((previous) => {
+      const last = previous[previous.length - 1]
+      if (last && Math.abs(last.nx - clampedX) < 0.001 && Math.abs(last.ny - clampedY) < 0.001) {
+        return previous
+      }
+      const id = 'CP' + cropPolygonIdRef.current
+      cropPolygonIdRef.current += 1
+      return [...previous, { id, nx: clampedX, ny: clampedY }]
+    })
+    setCropHoverPoint(null)
+  }
+
+  const handleCropStagePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!isCropImageReady || isCropPolygonClosed) {
+      setCropHoverPoint(null)
+      return
+    }
+    const viewport = cropViewportRef.current
+    if (!viewport) {
+      setCropHoverPoint(null)
+      return
+    }
+    const bounds = viewport.getBoundingClientRect()
+    if (bounds.width === 0 || bounds.height === 0) {
+      setCropHoverPoint(null)
+      return
+    }
+    const nx = (event.clientX - bounds.left) / bounds.width
+    const ny = (event.clientY - bounds.top) / bounds.height
+    if (nx < 0 || nx > 1 || ny < 0 || ny > 1) {
+      setCropHoverPoint(null)
+      return
+    }
+    event.preventDefault()
+    setCropHoverPoint({ nx: clamp01(nx), ny: clamp01(ny) })
+  }
+
+  const handleCropStagePointerLeave = () => {
+    setCropHoverPoint(null)
+  }
+
+  const handleCloseCropPolygon = () => {
+    if (cropPolygon.length >= 3) {
+      setIsCropPolygonClosed(true)
+      setCropHoverPoint(null)
+    }
+  }
+
+  const handleUndoCropPoint = () => {
+    setCropPolygon((previous) => {
+      if (previous.length === 0) {
+        return previous
+      }
+      const next = previous.slice(0, -1)
+      if (next.length === 0) {
+        cropPolygonIdRef.current = 1
+      }
+      return next
+    })
+    setIsCropPolygonClosed(false)
+    setCropHoverPoint(null)
+  }
+
+  const handleClearCropPolygon = () => {
+    setCropPolygon([])
+    setIsCropPolygonClosed(false)
+    setCropHoverPoint(null)
+    cropPolygonIdRef.current = 1
+  }
+
+  const handleApplyCrop = () => {
+    if (!isCropImageReady || !isCropPolygonClosed || cropPolygon.length < 3) {
+      return
+    }
+    const imageElement = cropImageRef.current
+    if (!imageElement) {
+      return
+    }
+    const { naturalWidth, naturalHeight } = imageElement
+    if (!naturalWidth || !naturalHeight) {
+      return
+    }
+    const pixelPoints = cropPolygon.map((vertex) => ({
+      x: vertex.nx * naturalWidth,
+      y: vertex.ny * naturalHeight,
+    }))
+    const xs = pixelPoints.map((point) => point.x)
+    const ys = pixelPoints.map((point) => point.y)
+    const minX = Math.min(...xs)
+    const maxX = Math.max(...xs)
+    const minY = Math.min(...ys)
+    const maxY = Math.max(...ys)
+    const width = Math.max(1, Math.round(maxX - minX))
+    const height = Math.max(1, Math.round(maxY - minY))
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      return
+    }
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d')
+    if (!context) {
+      return
+    }
+    context.save()
+    context.beginPath()
+    pixelPoints.forEach((point, index) => {
+      const px = point.x - minX
+      const py = point.y - minY
+      if (index === 0) {
+        context.moveTo(px, py)
+      } else {
+        context.lineTo(px, py)
+      }
+    })
+    context.closePath()
+    context.clip()
+    context.drawImage(imageElement, -minX, -minY)
+    context.restore()
+    const nextDataUrl = canvas.toDataURL('image/png')
+    const normalizedPolygon = cropPolygon.map((vertex, index) => {
+      const point = pixelPoints[index]
+      const normalizedX = clamp01(width > 0 ? (point.x - minX) / width : vertex.nx)
+      const normalizedY = clamp01(height > 0 ? (point.y - minY) / height : vertex.ny)
+      return { id: 'AC' + (index + 1), nx: normalizedX, ny: normalizedY }
+    })
+    setAppliedCropPolygon(normalizedPolygon.length >= 3 ? normalizedPolygon : null)
+    setOverlayDataUrl(nextDataUrl)
+    setOverlaySrc((previous) => {
+      if (previous && previous.startsWith('blob:')) {
+        URL.revokeObjectURL(previous)
+      }
+      return nextDataUrl
+    })
+    setOverlayScale(1)
+    setShowPayload(false)
+    setPayloadWarning(null)
+    setIsCropping(false)
+    setIsCropImageReady(false)
+    setCropPolygon([])
+    setIsCropPolygonClosed(false)
+    setCropHoverPoint(null)
+    cropPolygonIdRef.current = 1
+  }
+
+  const handleUseCropAsBorder = () => {
+    if (!appliedCropPolygon || appliedCropPolygon.length < 3) {
+      return
+    }
+    if (!gridAreaRef.current || !overlayImageRef.current) {
+      return
+    }
+    const gridBounds = gridAreaRef.current.getBoundingClientRect()
+    const imageBounds = overlayImageRef.current.getBoundingClientRect()
+    if (
+      gridBounds.width === 0 ||
+      gridBounds.height === 0 ||
+      imageBounds.width === 0 ||
+      imageBounds.height === 0
+    ) {
+      return
+    }
+    const makeBorderPoint = (vertex: CropVertex) => {
+      const px = imageBounds.left + vertex.nx * imageBounds.width
+      const py = imageBounds.top + vertex.ny * imageBounds.height
+      const nx = clamp01((px - gridBounds.left) / gridBounds.width)
+      const ny = clamp01((py - gridBounds.top) / gridBounds.height)
+      const id = 'B' + borderIdRef.current
+      borderIdRef.current += 1
+      return {
+        id,
+        x: Number.parseFloat((maxXDistance * nx).toFixed(3)),
+        y: Number.parseFloat((maxYDistance * ny).toFixed(3)),
+        nx,
+        ny,
+      }
+    }
+    const nextBorder = appliedCropPolygon.map(makeBorderPoint)
+    setAppliedBorderPoints(nextBorder)
+    setBorderPoints([])
+    setIsBorderClosed(true)
+    setShowPayload(false)
+    setPayloadWarning(null)
+    setCropHoverPoint(null)
+    window.alert('✅ Border has been set to the crop outline.')
+  }
+
+  const handleResetOverlayCrop = () => {
+    if (!rawOverlayDataUrl) {
+      return
+    }
+    setOverlayDataUrl(rawOverlayDataUrl)
+    setOverlaySrc((previous) => {
+      if (previous && previous.startsWith('blob:')) {
+        URL.revokeObjectURL(previous)
+      }
+      return rawOverlayDataUrl
+    })
+    setOverlayScale(1)
+    setShowPayload(false)
+    setPayloadWarning(null)
+    setIsCropping(false)
+    setIsCropImageReady(false)
+    setCropPolygon([])
+    setIsCropPolygonClosed(false)
+    setCropHoverPoint(null)
+    cropPolygonIdRef.current = 1
+    setAppliedCropPolygon(null)
+  }
+
+  const cropHasSelection = isCropPolygonClosed && cropPolygon.length >= 3
+  const canApplyCrop = Boolean(isCropImageReady && cropHasSelection)
+  const cropPolygonPointsAttr = cropPolygon
+    .map((vertex) => (vertex.nx * 100).toFixed(2) + ',' + (vertex.ny * 100).toFixed(2))
+    .join(' ')
+  const cropPolylinePointsAttr = (() => {
+    if (cropPolygon.length === 0) {
+      return ''
+    }
+    if (isCropPolygonClosed) {
+      return cropPolygonPointsAttr
+    }
+    if (!cropHoverPoint) {
+      return cropPolygonPointsAttr
+    }
+    const hoverPoint = (cropHoverPoint.nx * 100).toFixed(2) + ',' + (cropHoverPoint.ny * 100).toFixed(2)
+    return cropPolygonPointsAttr ? cropPolygonPointsAttr + ' ' + hoverPoint : hoverPoint
+  })()
+  const cropSizeLabel = (() => {
+    if (!cropHasSelection) {
+      return null
+    }
+    const imageElement = cropImageRef.current
+    if (!imageElement) {
+      return null
+    }
+    const { naturalWidth, naturalHeight } = imageElement
+    if (!naturalWidth || !naturalHeight) {
+      return null
+    }
+    const xs = cropPolygon.map((vertex) => vertex.nx * naturalWidth)
+    const ys = cropPolygon.map((vertex) => vertex.ny * naturalHeight)
+    const width = Math.max(1, Math.round(Math.max(...xs) - Math.min(...xs)))
+    const height = Math.max(1, Math.round(Math.max(...ys) - Math.min(...ys)))
+    if (!Number.isFinite(width) || !Number.isFinite(height)) {
+      return null
+    }
+    return width + ' × ' + height + ' px'
+  })()
 
   const handleCellClick = (event: MouseEvent<HTMLDivElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect()
@@ -1164,9 +1503,8 @@ function FloorPlanSheet({
       window.alert('Please enter a numeric value for the elevation.')
       return
     }
-    const defaultLabel = 'Point ' + pointIdRef.current
-    const labelInput = window.prompt('Measurement label', defaultLabel) ?? defaultLabel
-    const sanitizedLabel = labelInput.trim() || defaultLabel
+    const measurementLabelRaw = valueInput.trim()
+    const measurementLabel = measurementLabelRaw !== '' ? measurementLabelRaw : String(numericValue)
     const cellStartX = columnTicks[columnIndex]
     const cellEndX = columnTicks[Math.min(columnIndex + 1, columnCellCount)]
     const cellStartY = rowTicks[rowIndex]
@@ -1190,7 +1528,7 @@ function FloorPlanSheet({
         nx: normalizedX,
         ny: normalizedY,
         z: numericValue,
-        label: sanitizedLabel,
+        label: measurementLabel,
       },
     ])
     setShowPayload(false)
@@ -1204,6 +1542,7 @@ function FloorPlanSheet({
   const handleCloseBorder = () => {
     if (borderPoints.length >= 3) {
       setIsBorderClosed(true)
+      setAppliedBorderPoints(borderPoints)
       setShowPayload(false)
       setPayloadWarning(null)
     }
@@ -1218,6 +1557,7 @@ function FloorPlanSheet({
 
   const handleClearBorder = () => {
     setBorderPoints([])
+    setAppliedBorderPoints([])
     setIsBorderClosed(false)
     setShowPayload(false)
     setPayloadWarning(null)
@@ -1241,11 +1581,16 @@ function FloorPlanSheet({
 
   const overlayTransform = 'translate(-50%, -50%) scale(' + overlayScale + ')'
 
+  const hasBorder = borderPoints.length >= 3 || appliedBorderPoints.length >= 3
+
+  const displayedBorderPoints = borderPoints.length > 0 ? borderPoints : appliedBorderPoints
+
   const payload = useMemo<Fp1PreviewPayload | null>(() => {
-    if (!isBorderClosed || borderPoints.length < 3 || measurements.length === 0) {
+    const activeBorder = borderPoints.length >= 3 ? borderPoints : appliedBorderPoints
+    if (!activeBorder || activeBorder.length < 3 || measurements.length === 0) {
       return null
     }
-    const boundary = borderPoints.map((point) => ({
+    const boundary = activeBorder.map((point) => ({
       x: Number.parseFloat(point.x.toFixed(3)),
       y: Number.parseFloat(point.y.toFixed(3)),
     }))
@@ -1269,7 +1614,7 @@ function FloorPlanSheet({
       unit: unitDisplay,
       floorplanImage: overlayDataUrl,
     }
-  }, [borderPoints, measurements, isBorderClosed, spacing, unitDisplay, overlayDataUrl])
+  }, [borderPoints, appliedBorderPoints, measurements, spacing, unitDisplay, overlayDataUrl])
 
   useEffect(() => {
     if (!payload) {
@@ -1279,11 +1624,11 @@ function FloorPlanSheet({
 
   useEffect(() => {
     setPayloadWarning(null)
-  }, [borderPoints, measurements, isBorderClosed])
+  }, [borderPoints, appliedBorderPoints, measurements, hasBorder])
 
   useEffect(() => {
     setInitialGraphicsState({ status: 'idle', graphics: [] })
-  }, [borderPoints, measurements, spacing, unitDisplay, isBorderClosed, overlayDataUrl])
+  }, [borderPoints, appliedBorderPoints, measurements, spacing, unitDisplay, overlayDataUrl])
 
   const handlePreviewPayload = () => {
     if (!payload) {
@@ -1305,11 +1650,12 @@ function FloorPlanSheet({
     setPayloadWarning(null)
     setInitialGraphicsState({ status: 'loading', graphics: [] })
 
-  try {
-    console.info('[fp1] calling initial graphics endpoint', FAME_API_ENDPOINT, payload)
-    const response = await fetch(FAME_API_ENDPOINT, {
-      method: 'POST',
-      headers: {
+    try {
+      console.info('[fp1] calling initial graphics endpoint', FAME_API_ENDPOINT, payload)
+
+      const response = await fetch(FAME_API_ENDPOINT, {
+        method: 'POST',
+        headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
@@ -1317,56 +1663,48 @@ function FloorPlanSheet({
 
       if (!response.ok) {
         throw new Error('Service responded with status ' + response.status)
-    }
+      }
 
-    const responseBody = await response.json()
-    console.info('[fp1] initial graphics response body', responseBody)
-    const graphics: InitialGraphic[] = []
+      const responseBody = await response.json()
+      console.info('[fp1] initial graphics response body', responseBody)
+      const graphics: InitialGraphic[] = []
 
-    if (Array.isArray(responseBody?.graphics)) {
-      responseBody.graphics.forEach((item: { name?: string; image?: string }, index: number) => {
-        if (!item?.image || typeof item.image !== 'string') {
-          return
-        }
-        const labelKey = item.name ?? 'Layer ' + (index + 1)
-        const resolvedName = GRAPHIC_LABELS[labelKey] ?? labelKey
-        const imageSrc = item.image.startsWith('data:')
-          ? item.image
-          : 'data:image/png;base64,' + item.image
-        graphics.push({ name: resolvedName, image: imageSrc })
-      })
-    } else if (responseBody?.images && typeof responseBody.images === 'object') {
-      Object.entries(responseBody.images as Record<string, unknown>).forEach(
-        ([key, value], index) => {
+      if (Array.isArray(responseBody?.graphics)) {
+        responseBody.graphics.forEach((item: { name?: string; image?: string }, index: number) => {
+          if (!item?.image || typeof item.image !== 'string') {
+            return
+          }
+          const labelKey = item.name ?? 'Layer ' + (index + 1)
+          const resolvedName = GRAPHIC_LABELS[labelKey] ?? labelKey
+          const imageSrc = item.image.startsWith('data:') ? item.image : 'data:image/png;base64,' + item.image
+          graphics.push({ name: resolvedName, image: imageSrc })
+        })
+      } else if (responseBody?.images && typeof responseBody.images === 'object') {
+        Object.entries(responseBody.images as Record<string, unknown>).forEach(([key, value], index) => {
           if (typeof value !== 'string') {
             return
           }
           const resolvedName = GRAPHIC_LABELS[key] ?? 'Layer ' + (index + 1)
-          const imageSrc = value.startsWith('data:')
-            ? value
-            : 'data:image/png;base64,' + value
+          const imageSrc = value.startsWith('data:') ? value : 'data:image/png;base64,' + value
           graphics.push({ name: resolvedName, image: imageSrc })
-        },
-      )
-    }
+        })
+      }
 
-    if (graphics.length === 0) {
-      throw new Error('No graphics returned from the analysis service.')
-    }
+      if (graphics.length === 0) {
+        throw new Error('No graphics returned from the analysis service.')
+      }
 
-    const backendVersion = typeof responseBody?.version === 'string'
-      ? responseBody.version.trim()
-      : ''
+      const backendVersion = typeof responseBody?.version === 'string' ? responseBody.version.trim() : ''
 
-    const message = backendVersion
-      ? 'Run updated ' + backendVersion
-      : 'Run updated ' + INITIAL_GRAPHICS_VERSION
+      const message = backendVersion
+        ? 'Run updated ' + backendVersion
+        : 'Run updated ' + INITIAL_GRAPHICS_VERSION
 
-    setInitialGraphicsState({
-      status: 'ready',
-      graphics,
-      message,
-    })
+      setInitialGraphicsState({
+        status: 'ready',
+        graphics,
+        message,
+      })
     } catch (error) {
       setInitialGraphicsState({
         status: 'error',
@@ -1378,7 +1716,7 @@ function FloorPlanSheet({
 
   const payloadJson = payload ? JSON.stringify(payload, null, 2) : ''
 
-  const borderReady = isBorderClosed && borderPoints.length >= 3
+  const borderReady = hasBorder
   const measurementReady = measurements.length >= 3
   const hasMeasurements = measurements.length > 0
 
@@ -1412,8 +1750,8 @@ function FloorPlanSheet({
           style={{ display: 'none' }}
           onChange={handleOverlayChange}
         />
-        <span className="fp-hint">{overlaySrc ? 'Overlay applied' : 'No overlay'}</span>
-        {overlaySrc ? (
+        <span className="fp-hint">{hasOverlayImage ? 'Overlay applied' : 'No overlay'}</span>
+        {hasOverlayImage ? (
           <label className="fp-scale-control">
             <span>Scale {overlayScale.toFixed(2)}x</span>
             <input
@@ -1425,6 +1763,26 @@ function FloorPlanSheet({
               onChange={(event) => setOverlayScale(Number.parseFloat(event.target.value))}
             />
           </label>
+        ) : null}
+        {hasOverlayImage ? (
+          <button type="button" className="fp-button" onClick={handleOpenCropper} disabled={isCropping}>
+            Cut Floorplan
+          </button>
+        ) : null}
+        {rawOverlayDataUrl ? (
+          <button type="button" className="fp-button" onClick={handleResetOverlayCrop} disabled={!canResetCrop}>
+            Reset Crop
+          </button>
+        ) : null}
+        {appliedCropPolygon ? (
+          <button
+            type="button"
+            className="fp-button"
+            onClick={handleUseCropAsBorder}
+            disabled={!canUseCropOutline}
+          >
+            Use Crop Outline
+          </button>
         ) : null}
         <button
           type="button"
@@ -1453,7 +1811,7 @@ function FloorPlanSheet({
           type="button"
           className="fp-button"
           onClick={handleClearBorder}
-          disabled={borderPoints.length === 0}
+          disabled={!hasBorder}
         >
           Clear Border
         </button>
@@ -1498,10 +1856,11 @@ function FloorPlanSheet({
               </div>
             ))}
           </div>
-          <div className="fp-grid-area" onClick={handleCellClick}>
-            {overlaySrc ? (
+          <div className="fp-grid-area" ref={gridAreaRef} onClick={handleCellClick}>
+            {overlayDisplaySrc ? (
               <img
-                src={overlaySrc}
+                ref={overlayImageRef}
+                src={overlayDisplaySrc}
                 alt="Floor plan overlay"
                 className="fp-overlay"
                 style={{ transform: overlayTransform }}
@@ -1545,10 +1904,10 @@ function FloorPlanSheet({
           <strong>Mode:</strong> {modeLabel}
         </div>
         <div className="fp-summary-item">
-          <strong>Border vertices:</strong> {borderPoints.length}
+          <strong>Border vertices:</strong> {displayedBorderPoints.length}
         </div>
         <div className="fp-summary-item">
-          <strong>Border closed:</strong> {isBorderClosed ? 'Yes' : 'No'}
+          <strong>Border closed:</strong> {hasBorder ? 'Yes' : 'No'}
         </div>
         <div className="fp-summary-item">
           <strong>Measurement points:</strong> {measurements.length}
@@ -1620,11 +1979,11 @@ function FloorPlanSheet({
         </div>
         <div className="fp-panel">
           <h4>Border Vertices</h4>
-          {borderPoints.length === 0 ? (
+          {displayedBorderPoints.length === 0 ? (
             <p className="fp-hint">Switch to Border mode to trace the footprint.</p>
           ) : (
             <ul className="fp-item-list">
-              {borderPoints.map((point, index) => (
+              {displayedBorderPoints.map((point, index) => (
                 <li key={point.id}>
                   <strong>Vertex {index + 1}</strong>
                   <span>X: {point.x.toFixed(2)} {unitDisplay}</span>
@@ -1644,9 +2003,114 @@ function FloorPlanSheet({
       {showPayload && payload ? (
         <pre className="fp-payload-preview">{payloadJson}</pre>
       ) : null}
+      {isCropping && cropSourceUrl ? (
+        <div className="fp-crop-modal" role="dialog" aria-modal="true">
+          <div className="fp-crop-content">
+            <div className="fp-crop-header">
+              <h2 className="fp-crop-title">Cut Floorplan</h2>
+              <button type="button" className="fp-button" onClick={handleCancelCrop}>
+                Close
+              </button>
+            </div>
+            <div className="fp-crop-stage" ref={cropStageRef}>
+              <div
+                className="fp-crop-viewport"
+                ref={cropViewportRef}
+                onPointerDown={handleCropStagePointerDown}
+                onPointerMove={handleCropStagePointerMove}
+                onPointerLeave={handleCropStagePointerLeave}
+              >
+                <img
+                  ref={cropImageRef}
+                  src={cropSourceUrl}
+                  alt="Floorplan overlay source"
+                  className="fp-crop-image"
+                  onLoad={() => setIsCropImageReady(true)}
+                  onError={() => setIsCropImageReady(false)}
+                />
+                <svg className="fp-crop-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
+                  {cropPolygon.length >= 2 ? (
+                    isCropPolygonClosed ? (
+                      <polygon points={cropPolygonPointsAttr} className="fp-crop-path" />
+                    ) : (
+                      <polyline points={cropPolylinePointsAttr} className="fp-crop-path" />
+                    )
+                  ) : null}
+                  {cropPolygon.map((vertex) => (
+                    <circle
+                      key={vertex.id}
+                      cx={vertex.nx * 100}
+                      cy={vertex.ny * 100}
+                      r="1.2"
+                      className="fp-crop-vertex"
+                    />
+                  ))}
+                  {!isCropPolygonClosed && cropHoverPoint ? (
+                    <circle
+                      cx={cropHoverPoint.nx * 100}
+                      cy={cropHoverPoint.ny * 100}
+                      r="1"
+                      className="fp-crop-vertex is-hover"
+                    />
+                  ) : null}
+                </svg>
+              </div>
+              {!isCropImageReady ? (
+                <div className="fp-crop-hint">Loading floorplan…</div>
+              ) : cropPolygon.length === 0 ? (
+                <div className="fp-crop-hint">Click the floorplan to add vertices around the area you want to keep.</div>
+              ) : !isCropPolygonClosed ? (
+                <div className="fp-crop-hint">Add more vertices and close the outline when you are ready.</div>
+              ) : null}
+            </div>
+            <div className="fp-crop-toolbar">
+              <span className="fp-crop-status">
+                {cropPolygon.length} {cropPolygon.length === 1 ? 'point' : 'points'}{' '}
+                {isCropPolygonClosed ? '(closed)' : '(open)'}
+                {cropSizeLabel ? ' • ' + cropSizeLabel : ''}
+              </span>
+              <div className="fp-crop-toolbar-buttons">
+                <button
+                  type="button"
+                  className="fp-button"
+                  onClick={handleCloseCropPolygon}
+                  disabled={isCropPolygonClosed || cropPolygon.length < 3}
+                >
+                  Close Outline
+                </button>
+                <button
+                  type="button"
+                  className="fp-button"
+                  onClick={handleUndoCropPoint}
+                  disabled={cropPolygon.length === 0}
+                >
+                  Undo Point
+                </button>
+                <button
+                  type="button"
+                  className="fp-button"
+                  onClick={handleClearCropPolygon}
+                  disabled={cropPolygon.length === 0}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+            <div className="fp-crop-actions">
+              <button type="button" className="fp-button" onClick={handleCancelCrop}>
+                Cancel
+              </button>
+              <button type="button" className="fp-button" onClick={handleApplyCrop} disabled={!canApplyCrop}>
+                Apply Cut
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
 
 
 export default App
+

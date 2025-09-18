@@ -773,6 +773,130 @@
   transform-origin: center;
 }
 
+.fp-crop-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(2px);
+  padding: 24px;
+  z-index: 80;
+}
+.fp-crop-content {
+  background: #ffffff;
+  border-radius: 16px;
+  width: min(900px, 100%);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.3);
+  overflow: hidden;
+}
+.fp-crop-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 0;
+  gap: 12px;
+}
+.fp-crop-title {
+  margin: 0;
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+.fp-crop-stage {
+  position: relative;
+  margin: 16px 24px;
+  border: 1px solid rgba(15, 23, 42, 0.2);
+  border-radius: 12px;
+  background: #0f172a;
+  min-height: 360px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: crosshair;
+  overflow: hidden;
+  touch-action: none;
+}
+.fp-crop-image {
+  max-width: 100%;
+  max-height: 70vh;
+  width: auto;
+  height: auto;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+}
+.fp-crop-viewport {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+.fp-crop-hint {
+  position: absolute;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.7);
+  color: #f8fafc;
+  font-size: 0.9rem;
+  pointer-events: none;
+  text-align: center;
+  max-width: 70%;
+}
+.fp-crop-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.fp-crop-path {
+  fill: rgba(56, 189, 248, 0.18);
+  stroke: #38bdf8;
+  stroke-width: 0.8;
+  vector-effect: non-scaling-stroke;
+}
+.fp-crop-vertex {
+  fill: #0ea5e9;
+  stroke: #0f172a;
+  stroke-width: 0.6;
+}
+.fp-crop-vertex.is-hover {
+  fill: #38bdf8;
+  opacity: 0.7;
+}
+.fp-crop-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 24px 16px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.fp-crop-status {
+  font-size: 0.85rem;
+  color: #1f2937;
+  flex: 1 1 auto;
+}
+.fp-crop-toolbar-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.fp-crop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 0 24px 24px;
+}
+.fp-crop-actions .fp-button {
+  min-width: 128px;
+}
+
 .fp-point {
   position: absolute;
   transform: translate(-50%, -50%);

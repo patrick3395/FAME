@@ -178,7 +178,7 @@ def _annotate_points(ax: plt.Axes, points: Sequence[Point3D]) -> None:
         if point.label:
             label += f" ({point.label})"
 
-        ax.scatter(point.x, point.y, c=color, edgecolors=marker_edge, linewidths=0.8, s=36, zorder=5)
+        ax.scatter(point.x, point.y, c=color, edgecolors=marker_edge, linewidths=0.8, s=36, zorder=7)
         ax.text(
             point.x,
             point.y + 0.8,
@@ -188,7 +188,7 @@ def _annotate_points(ax: plt.Axes, points: Sequence[Point3D]) -> None:
             fontweight='bold',
             ha='center',
             va='bottom',
-            zorder=6,
+            zorder=8,
             path_effects=[PathEffects.withStroke(linewidth=1.6, foreground='white')],
         )
 
@@ -287,7 +287,18 @@ def _generate_profile_lines_from_boundary(boundary: Sequence[BoundaryPoint], pol
         end = coords[(idx + 1) % len(coords)]
         lines.append({'start': start, 'end': end})
 
-    return lines
+    deduped: List[Dict[str, Tuple[float, float]]] = []
+    seen = set()
+    for line in lines:
+        start = (round(line['start'][0], 4), round(line['start'][1], 4))
+        end = (round(line['end'][0], 4), round(line['end'][1], 4))
+        key = tuple(sorted([start, end]))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(line)
+
+    return deduped
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +370,7 @@ def _autocrop_floorplan(image: np.ndarray) -> np.ndarray:
     return crop
 
 
-def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional[np.ndarray], alpha: float = 0.5):
+def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional[np.ndarray], alpha: float = 0.85):
     if floorplan_array is None:
         return
 
@@ -371,7 +382,8 @@ def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional
         extent=(min_x, max_x, min_y, max_y),
         origin="upper",
         alpha=alpha,
-        zorder=0,
+        zorder=5,
+        interpolation="bilinear",
     )
 
 
@@ -433,7 +445,6 @@ def plot_heatmap(
     floorplan_array: Optional[np.ndarray] = None,
 ) -> str:
     fig, ax = plt.subplots(figsize=(10, 8))
-    _draw_floorplan(ax, polygon, floorplan_array)
     contour = ax.contourf(
         grid_x,
         grid_y,
@@ -442,8 +453,9 @@ def plot_heatmap(
         cmap=color_scale.cmap,
         norm=color_scale.norm,
         zorder=1,
-        alpha=0.7,
+        alpha=0.45,
     )
+    _draw_floorplan(ax, polygon, floorplan_array)
     cbar = fig.colorbar(
         contour,
         ax=ax,
@@ -457,7 +469,7 @@ def plot_heatmap(
     cbar.formatter = ticker.FormatStrFormatter('%.1f')
     cbar.update_ticks()
     ax.add_collection(
-        PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="black", linewidth=1.5, zorder=2)
+        PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="black", linewidth=1.5, zorder=6)
     )
     _annotate_points(ax, points)
     min_x, max_x, min_y, max_y = polygon_bounds(polygon)
@@ -484,7 +496,6 @@ def plot_repair_plan(
     floorplan_array: Optional[np.ndarray] = None,
 ) -> str:
     fig, ax = plt.subplots(figsize=(10, 8))
-    _draw_floorplan(ax, polygon, floorplan_array)
     contour = ax.contourf(
         grid_x,
         grid_y,
@@ -492,9 +503,11 @@ def plot_repair_plan(
         levels=color_scale.levels,
         cmap=color_scale.cmap,
         norm=color_scale.norm,
-        alpha=0.85,
+        alpha=0.4,
         zorder=1,
     )
+    _draw_floorplan(ax, polygon, floorplan_array)
+    _draw_floorplan(ax, polygon, floorplan_array)
     contour_lines = ax.contour(
         grid_x,
         grid_y,
@@ -502,7 +515,7 @@ def plot_repair_plan(
         levels=color_scale.levels,
         colors="#1f2937",
         linewidths=0.8,
-        zorder=2.5,
+        zorder=6.5,
     )
     ax.clabel(contour_lines, fmt="%.1f", fontsize=7, inline=True)
     cbar = fig.colorbar(
@@ -518,12 +531,12 @@ def plot_repair_plan(
     cbar.formatter = ticker.FormatStrFormatter('%.1f')
     cbar.update_ticks()
     ax.add_collection(
-        PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="#0f172a", linewidth=2, zorder=3)
+        PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="#0f172a", linewidth=2, zorder=6)
     )
     for line in profile_lines:
         (x1, y1) = line["start"]
         (x2, y2) = line["end"]
-        ax.plot([x1, x2], [y1, y2], color="white", linestyle="--", linewidth=1.1, alpha=0.35, zorder=4)
+        ax.plot([x1, x2], [y1, y2], color="white", linestyle="--", linewidth=1.1, alpha=0.35, zorder=7)
     _annotate_points(ax, points)
     min_x, max_x, min_y, max_y = polygon_bounds(polygon)
     pad = max(max_x - min_x, max_y - min_y) * 0.1
@@ -550,7 +563,6 @@ def plot_profiles(
     floorplan_array: Optional[np.ndarray] = None,
 ) -> str:
     fig, ax = plt.subplots(figsize=(10, 8))
-    _draw_floorplan(ax, polygon, floorplan_array)
     contour = ax.contourf(
         grid_x,
         grid_y,
@@ -562,19 +574,19 @@ def plot_profiles(
         zorder=1,
     )
     ax.add_collection(
-        PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="#2563eb", linewidth=2, zorder=2)
+        PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="#2563eb", linewidth=2, zorder=6)
     )
     for line in profile_lines:
         (x1, y1) = line["start"]
         (x2, y2) = line["end"]
-        ax.plot([x1, x2], [y1, y2], color="#111827", linewidth=0.7, alpha=0.55, zorder=3)
+        ax.plot([x1, x2], [y1, y2], color="#111827", linewidth=0.7, alpha=0.55, zorder=6.5)
     boundary_coords = [(p.x, p.y) for p in boundary]
     ax.plot(
         [pt[0] for pt in boundary_coords + boundary_coords[:1]],
         [pt[1] for pt in boundary_coords + boundary_coords[:1]],
         color='#0f172a',
         linewidth=2,
-        zorder=4,
+        zorder=7,
     )
     _annotate_points(ax, points)
     cbar = fig.colorbar(
