@@ -27,7 +27,9 @@ const dataBaseUrl = (import.meta.env.BASE_URL || "") + "data"
 const TEXT_URL = dataBaseUrl + "/FAME_TEXT.json"
 const EQUATIONS_URL = dataBaseUrl + "/FAME_EQUATIONS.json"
 
-const DEV_BUILD_VERSION = "Version 35"
+const DEV_BUILD_VERSION = "Version 37"
+const INITIAL_GRAPHICS_VERSION = '1'
+const INITIAL_GRAPHICS_MESSAGE = 'Run updated v' + INITIAL_GRAPHICS_VERSION
 
 
 type LoadState<T> = {
@@ -1356,7 +1358,7 @@ function FloorPlanSheet({
     setInitialGraphicsState({
       status: 'ready',
       graphics,
-      message: 'Run is updated',
+      message: INITIAL_GRAPHICS_MESSAGE,
     })
     } catch (error) {
       setInitialGraphicsState({
