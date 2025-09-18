@@ -193,7 +193,8 @@ def _annotate_points(ax: plt.Axes, points: Sequence[Point3D]) -> None:
         )
 
 
-def _scan_intersections(polygon: np.ndarray, value: float, horizontal: bool = True) -> List[float]:
+
+def _scan_cartesian_intersections(polygon: np.ndarray, value: float, horizontal: bool = True) -> List[float]:
     intersections: List[float] = []
     for (x1, y1), (x2, y2) in zip(polygon[:-1], polygon[1:]):
         if horizontal:
@@ -216,6 +217,21 @@ def _scan_intersections(polygon: np.ndarray, value: float, horizontal: bool = Tr
     return intersections
 
 
+def _scan_diagonal_intersections(polygon: np.ndarray, slope: float, offset: float) -> List[Tuple[float, float]]:
+    points: List[Tuple[float, float]] = []
+    for (x1, y1), (x2, y2) in zip(polygon[:-1], polygon[1:]):
+        denom = (y2 - y1) - slope * (x2 - x1)
+        if math.isclose(denom, 0.0):
+            continue
+        t = (slope * x1 + offset - y1) / denom
+        if 0.0 <= t <= 1.0:
+            x = x1 + t * (x2 - x1)
+            y = y1 + t * (y2 - y1)
+            points.append((x, y))
+    points.sort(key=lambda p: p[0] + p[1])
+    return points
+
+
 def _generate_profile_lines_from_boundary(boundary: Sequence[BoundaryPoint], polygon_path: Path) -> List[Dict[str, Tuple[float, float]]]:
     coords = [(point.x, point.y) for point in boundary]
     if len(coords) < 3:
@@ -228,7 +244,7 @@ def _generate_profile_lines_from_boundary(boundary: Sequence[BoundaryPoint], pol
 
     horizontal_levels = np.linspace(min_y, max_y, 42)[1:-1]
     for y in horizontal_levels:
-        xs = _scan_intersections(polygon, y, horizontal=True)
+        xs = _scan_cartesian_intersections(polygon, y, horizontal=True)
         for i in range(0, len(xs) - 1, 2):
             start = (xs[i], y)
             end = (xs[i + 1], y)
@@ -238,7 +254,7 @@ def _generate_profile_lines_from_boundary(boundary: Sequence[BoundaryPoint], pol
 
     vertical_levels = np.linspace(min_x, max_x, 42)[1:-1]
     for x in vertical_levels:
-        ys = _scan_intersections(polygon, x, horizontal=False)
+        ys = _scan_cartesian_intersections(polygon, x, horizontal=False)
         for i in range(0, len(ys) - 1, 2):
             start = (x, ys[i])
             end = (x, ys[i + 1])
@@ -246,13 +262,30 @@ def _generate_profile_lines_from_boundary(boundary: Sequence[BoundaryPoint], pol
             if polygon_path.contains_point(midpoint):
                 lines.append({'start': start, 'end': end})
 
+    diag_levels_pos = np.linspace((min_y - min_x), (max_y - max_x), 30)
+    for c in diag_levels_pos:
+        pts = _scan_diagonal_intersections(polygon, 1.0, c)
+        for i in range(0, len(pts) - 1, 2):
+            start = pts[i]
+            end = pts[i + 1]
+            midpoint = ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
+            if polygon_path.contains_point(midpoint):
+                lines.append({'start': start, 'end': end})
+
+    diag_levels_neg = np.linspace((min_y + max_x), (max_y + min_x), 30)
+    for c in diag_levels_neg:
+        pts = _scan_diagonal_intersections(polygon, -1.0, c)
+        for i in range(0, len(pts) - 1, 2):
+            start = pts[i]
+            end = pts[i + 1]
+            midpoint = ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
+            if polygon_path.contains_point(midpoint):
+                lines.append({'start': start, 'end': end})
+
     for idx in range(len(coords)):
         start = coords[idx]
         end = coords[(idx + 1) % len(coords)]
         lines.append({'start': start, 'end': end})
-
-    if len(lines) > 80:
-        lines = lines[:80]
 
     return lines
 
@@ -307,10 +340,10 @@ def _decode_floorplan(image_data: Optional[str]) -> Optional[np.ndarray]:
 def _autocrop_floorplan(image: np.ndarray) -> np.ndarray:
     if image.shape[2] == 4:
         alpha = image[:, :, 3]
-        mask = alpha > 10
+        mask = alpha > 8
     else:
         grayscale = np.mean(image[:, :, :3], axis=2)
-        mask = grayscale < 250
+        mask = grayscale < 248
 
     coords = np.argwhere(mask)
     if coords.size == 0:
@@ -318,7 +351,12 @@ def _autocrop_floorplan(image: np.ndarray) -> np.ndarray:
 
     y0, x0 = coords.min(axis=0)
     y1, x1 = coords.max(axis=0) + 1
-    return image[y0:y1, x0:x1]
+
+    crop = image[y0:y1, x0:x1]
+    # Fallback if cropping removed everything
+    if crop.shape[0] < 10 or crop.shape[1] < 10:
+        return image
+    return crop
 
 
 def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional[np.ndarray], alpha: float = 0.5):
@@ -404,13 +442,13 @@ def plot_heatmap(
         cmap=color_scale.cmap,
         norm=color_scale.norm,
         zorder=1,
-        alpha=0.85,
+        alpha=0.7,
     )
     cbar = fig.colorbar(
         contour,
         ax=ax,
-        shrink=0.82,
-        pad=0.02,
+        shrink=0.5,
+        pad=0.08,
         label="Elevation",
         extend="both",
     )
@@ -470,8 +508,8 @@ def plot_repair_plan(
     cbar = fig.colorbar(
         contour,
         ax=ax,
-        shrink=0.82,
-        pad=0.02,
+        shrink=0.5,
+        pad=0.08,
         label="Elevation",
         extend="both",
     )
@@ -542,8 +580,8 @@ def plot_profiles(
     cbar = fig.colorbar(
         contour,
         ax=ax,
-        shrink=0.82,
-        pad=0.02,
+        shrink=0.5,
+        pad=0.08,
         label="Elevation",
         extend="both",
     )
