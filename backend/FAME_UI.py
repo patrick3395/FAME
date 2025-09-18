@@ -193,48 +193,66 @@ def _annotate_points(ax: plt.Axes, points: Sequence[Point3D]) -> None:
         )
 
 
+def _scan_intersections(polygon: np.ndarray, value: float, horizontal: bool = True) -> List[float]:
+    intersections: List[float] = []
+    for (x1, y1), (x2, y2) in zip(polygon[:-1], polygon[1:]):
+        if horizontal:
+            y_min, y_max = sorted((y1, y2))
+            if y_min <= value < y_max or (math.isclose(value, y_max) and value != min(y1, y2)):
+                if math.isclose(y1, y2):
+                    continue
+                t = (value - y1) / (y2 - y1)
+                x_cross = x1 + t * (x2 - x1)
+                intersections.append(x_cross)
+        else:
+            x_min, x_max = sorted((x1, x2))
+            if x_min <= value < x_max or (math.isclose(value, x_max) and value != min(x1, x2)):
+                if math.isclose(x1, x2):
+                    continue
+                t = (value - x1) / (x2 - x1)
+                y_cross = y1 + t * (y2 - y1)
+                intersections.append(y_cross)
+    intersections.sort()
+    return intersections
+
+
 def _generate_profile_lines_from_boundary(boundary: Sequence[BoundaryPoint], polygon_path: Path) -> List[Dict[str, Tuple[float, float]]]:
     coords = [(point.x, point.y) for point in boundary]
     if len(coords) < 3:
         return []
 
-    pts = np.array(coords, dtype=float)
-    unique_pts = np.unique(pts, axis=0)
-    if unique_pts.shape[0] < 3:
-        return []
-
-    try:
-        delaunay = Delaunay(unique_pts)
-    except Exception:
-        # Fall back to simple polygon edges if triangulation fails
-        lines = []
-        for idx in range(len(coords)):
-            start = coords[idx]
-            end = coords[(idx + 1) % len(coords)]
-            lines.append({'start': start, 'end': end})
-        return lines
-
-    edges = set()
-    for simplex in delaunay.simplices:
-        for i in range(3):
-            a = simplex[i]
-            b = simplex[(i + 1) % 3]
-            edge = tuple(sorted((a, b)))
-            edges.add(edge)
+    polygon = np.array(coords + [coords[0]], dtype=float)
+    min_x, max_x, min_y, max_y = polygon_bounds(polygon)
 
     lines: List[Dict[str, Tuple[float, float]]] = []
-    for a, b in edges:
-        start = tuple(unique_pts[a])
-        end = tuple(unique_pts[b])
-        midpoint = ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
-        if polygon_path.contains_point(midpoint):
-            lines.append({'start': start, 'end': end})
 
-    # Always include polygon edges to reinforce the footprint
+    horizontal_levels = np.linspace(min_y, max_y, 42)[1:-1]
+    for y in horizontal_levels:
+        xs = _scan_intersections(polygon, y, horizontal=True)
+        for i in range(0, len(xs) - 1, 2):
+            start = (xs[i], y)
+            end = (xs[i + 1], y)
+            midpoint = ((start[0] + end[0]) / 2.0, y)
+            if polygon_path.contains_point(midpoint):
+                lines.append({'start': start, 'end': end})
+
+    vertical_levels = np.linspace(min_x, max_x, 42)[1:-1]
+    for x in vertical_levels:
+        ys = _scan_intersections(polygon, x, horizontal=False)
+        for i in range(0, len(ys) - 1, 2):
+            start = (x, ys[i])
+            end = (x, ys[i + 1])
+            midpoint = (x, (start[1] + end[1]) / 2.0)
+            if polygon_path.contains_point(midpoint):
+                lines.append({'start': start, 'end': end})
+
     for idx in range(len(coords)):
         start = coords[idx]
         end = coords[(idx + 1) % len(coords)]
         lines.append({'start': start, 'end': end})
+
+    if len(lines) > 80:
+        lines = lines[:80]
 
     return lines
 
@@ -286,11 +304,29 @@ def _decode_floorplan(image_data: Optional[str]) -> Optional[np.ndarray]:
         return None
 
 
-def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional[np.ndarray], alpha: float = 0.85):
+def _autocrop_floorplan(image: np.ndarray) -> np.ndarray:
+    if image.shape[2] == 4:
+        alpha = image[:, :, 3]
+        mask = alpha > 10
+    else:
+        grayscale = np.mean(image[:, :, :3], axis=2)
+        mask = grayscale < 250
+
+    coords = np.argwhere(mask)
+    if coords.size == 0:
+        return image
+
+    y0, x0 = coords.min(axis=0)
+    y1, x1 = coords.max(axis=0) + 1
+    return image[y0:y1, x0:x1]
+
+
+def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional[np.ndarray], alpha: float = 0.5):
     if floorplan_array is None:
         return
 
-    floorplan_array = np.flipud(floorplan_array)
+    cropped = _autocrop_floorplan(floorplan_array)
+    floorplan_array = np.flipud(cropped)
     min_x, max_x, min_y, max_y = polygon_bounds(polygon)
     ax.imshow(
         floorplan_array,
@@ -358,7 +394,7 @@ def plot_heatmap(
     color_scale: ColorScale,
     floorplan_array: Optional[np.ndarray] = None,
 ) -> str:
-    fig, ax = plt.subplots(figsize=(6, 6))
+    fig, ax = plt.subplots(figsize=(10, 8))
     _draw_floorplan(ax, polygon, floorplan_array)
     contour = ax.contourf(
         grid_x,
@@ -368,6 +404,7 @@ def plot_heatmap(
         cmap=color_scale.cmap,
         norm=color_scale.norm,
         zorder=1,
+        alpha=0.85,
     )
     cbar = fig.colorbar(
         contour,
@@ -408,7 +445,7 @@ def plot_repair_plan(
     color_scale: ColorScale,
     floorplan_array: Optional[np.ndarray] = None,
 ) -> str:
-    fig, ax = plt.subplots(figsize=(6, 6))
+    fig, ax = plt.subplots(figsize=(10, 8))
     _draw_floorplan(ax, polygon, floorplan_array)
     contour = ax.contourf(
         grid_x,
@@ -474,7 +511,7 @@ def plot_profiles(
     color_scale: ColorScale,
     floorplan_array: Optional[np.ndarray] = None,
 ) -> str:
-    fig, ax = plt.subplots(figsize=(6, 6))
+    fig, ax = plt.subplots(figsize=(10, 8))
     _draw_floorplan(ax, polygon, floorplan_array)
     contour = ax.contourf(
         grid_x,
