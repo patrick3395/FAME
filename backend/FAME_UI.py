@@ -289,6 +289,7 @@ def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional
     if floorplan_array is None:
         return
 
+    floorplan_array = np.flipud(floorplan_array)
     min_x, max_x, min_y, max_y = polygon_bounds(polygon)
     ax.imshow(
         floorplan_array,
@@ -367,7 +368,7 @@ def plot_heatmap(
         norm=color_scale.norm,
         zorder=1,
     )
-    fig.colorbar(
+    cbar = fig.colorbar(
         contour,
         ax=ax,
         shrink=0.82,
@@ -380,7 +381,7 @@ def plot_heatmap(
     )
     _annotate_points(ax, points)
     min_x, max_x, min_y, max_y = polygon_bounds(polygon)
-    pad = max(max_x - min_x, max_y - min_y) * 0.03
+    pad = max(max_x - min_x, max_y - min_y) * 0.1
     ax.set_xlim(min_x - pad, max_x + pad)
     ax.set_ylim(min_y - pad, max_y + pad)
     ax.invert_yaxis()
@@ -388,6 +389,7 @@ def plot_heatmap(
     ax.set_xlabel('Left to Right')
     ax.set_ylabel('Bottom to Top')
     ax.set_aspect("equal", adjustable="box")
+    cbar.ax.set_yticklabels([f"{tick:.1f}" for tick in cbar.get_ticks()])
     return to_base64(fig)
 
 
@@ -424,7 +426,7 @@ def plot_repair_plan(
         zorder=2.5,
     )
     ax.clabel(contour_lines, fmt="%.1f", fontsize=7, inline=True)
-    fig.colorbar(
+    cbar = fig.colorbar(
         contour,
         ax=ax,
         shrink=0.82,
@@ -441,7 +443,7 @@ def plot_repair_plan(
         ax.plot([x1, x2], [y1, y2], color="white", linestyle="--", linewidth=1.1, alpha=0.35, zorder=4)
     _annotate_points(ax, points)
     min_x, max_x, min_y, max_y = polygon_bounds(polygon)
-    pad = max(max_x - min_x, max_y - min_y) * 0.03
+    pad = max(max_x - min_x, max_y - min_y) * 0.1
     ax.set_xlim(min_x - pad, max_x + pad)
     ax.set_ylim(min_y - pad, max_y + pad)
     ax.invert_yaxis()
@@ -449,6 +451,7 @@ def plot_repair_plan(
     ax.set_xlabel('Left to Right')
     ax.set_ylabel('Bottom to Top')
     ax.set_aspect("equal", adjustable="box")
+    cbar.ax.set_yticklabels([f"{tick:.1f}" for tick in cbar.get_ticks()])
     return to_base64(fig)
 
 
@@ -492,7 +495,7 @@ def plot_profiles(
         zorder=4,
     )
     _annotate_points(ax, points)
-    fig.colorbar(
+    cbar = fig.colorbar(
         contour,
         ax=ax,
         shrink=0.82,
@@ -501,7 +504,7 @@ def plot_profiles(
         extend="both",
     )
     min_x, max_x, min_y, max_y = polygon_bounds(polygon)
-    pad = max(max_x - min_x, max_y - min_y) * 0.03
+    pad = max(max_x - min_x, max_y - min_y) * 0.1
     ax.set_xlim(min_x - pad, max_x + pad)
     ax.set_ylim(min_y - pad, max_y + pad)
     ax.invert_yaxis()
@@ -509,6 +512,7 @@ def plot_profiles(
     ax.set_xlabel('Left to Right')
     ax.set_ylabel('Bottom to Top')
     ax.set_aspect("equal", adjustable="box")
+    cbar.ax.set_yticklabels([f"{tick:.1f}" for tick in cbar.get_ticks()])
     return to_base64(fig)
 
 

@@ -1583,10 +1583,18 @@ function FloorPlanSheet({
         ) : null}
       </div>
       {initialGraphicsState.status === 'ready' && initialGraphicsState.graphics.length > 0 ? (
-        <div className="fp-graphics-grid">
+        <div className="fp-graphics-grid" style={{ display: 'block', width: '100%' }}>
           {initialGraphicsState.graphics.map((graphic, index) => (
-            <figure key={graphic.name + '-' + index} className="fp-graphic-card">
-              <img src={graphic.image} alt={graphic.name} />
+            <figure
+              key={graphic.name + '-' + index}
+              className="fp-graphic-card"
+              style={{ width: '100%', maxWidth: '960px', margin: '0 auto 32px' }}
+            >
+              <img
+                src={graphic.image}
+                alt={graphic.name}
+                style={{ width: '100%', height: 'auto', display: 'block' }}
+              />
               <figcaption>{graphic.name}</figcaption>
             </figure>
           ))}
