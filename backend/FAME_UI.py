@@ -25,6 +25,8 @@ from scipy.spatial import Delaunay, cKDTree
 # Use non-interactive backend so the service can render off-screen
 plt.ioff()
 
+BACKEND_REVISION_TAG = "backend-v1"
+
 logger = logging.getLogger('FAME_UI')
 if not logger.handlers:
     handler = logging.StreamHandler()
@@ -631,12 +633,16 @@ def run_analysis():
             "images": result.images,
             "profileLines": result.profile_lines,
             "unit": payload.unit,
+            "version": BACKEND_REVISION_TAG,
         })
         response.status_code = 200
         return _corsify_response(response)
     except Exception as exc:  # pragma: no cover - top-level guard
         logger.exception('run_analysis failed: %s', exc)
-        response = jsonify({"error": str(exc)})
+        response = jsonify({
+            "error": str(exc),
+            "version": BACKEND_REVISION_TAG,
+        })
         response.status_code = 400
         return _corsify_response(response)
 

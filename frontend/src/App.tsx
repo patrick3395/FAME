@@ -28,8 +28,7 @@ const TEXT_URL = dataBaseUrl + "/FAME_TEXT.json"
 const EQUATIONS_URL = dataBaseUrl + "/FAME_EQUATIONS.json"
 
 const DEV_BUILD_VERSION = "Version 37"
-const INITIAL_GRAPHICS_VERSION = '1'
-const INITIAL_GRAPHICS_MESSAGE = 'Run updated v' + INITIAL_GRAPHICS_VERSION
+const INITIAL_GRAPHICS_VERSION = 'fallback-v1'
 
 
 type LoadState<T> = {
@@ -1355,10 +1354,18 @@ function FloorPlanSheet({
       throw new Error('No graphics returned from the analysis service.')
     }
 
+    const backendVersion = typeof responseBody?.version === 'string'
+      ? responseBody.version.trim()
+      : ''
+
+    const message = backendVersion
+      ? 'Run updated ' + backendVersion
+      : 'Run updated ' + INITIAL_GRAPHICS_VERSION
+
     setInitialGraphicsState({
       status: 'ready',
       graphics,
-      message: INITIAL_GRAPHICS_MESSAGE,
+      message,
     })
     } catch (error) {
       setInitialGraphicsState({
