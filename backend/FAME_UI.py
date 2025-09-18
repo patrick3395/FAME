@@ -20,7 +20,7 @@ from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 import matplotlib.patheffects as PathEffects
 from PIL import Image
 from scipy.interpolate import griddata
-from scipy.spatial import Delaunay
+from scipy.spatial import Delaunay, cKDTree
 
 # Use non-interactive backend so the service can render off-screen
 plt.ioff()
@@ -142,6 +142,31 @@ def _corsify_response(response):
     return response
 
 
+def _generate_boundary_samples(boundary_points: Sequence[Tuple[float, float]], spacing: float) -> List[Tuple[float, float]]:
+    if spacing <= 0:
+        return []
+
+    samples: List[Tuple[float, float]] = []
+    boundary_array = np.asarray(boundary_points, dtype=np.float32)
+    if len(boundary_array) < 2:
+        return samples
+
+    for idx in range(len(boundary_array) - 1):
+        start = boundary_array[idx]
+        end = boundary_array[idx + 1]
+        segment = end - start
+        length = float(np.hypot(segment[0], segment[1]))
+        if length == 0:
+            continue
+
+        num_points = max(int(np.floor(length / spacing)), 1)
+        for t in np.linspace(0.0, 1.0, num_points, endpoint=False):
+            sample = (float(start[0] + t * segment[0]), float(start[1] + t * segment[1]))
+            samples.append(sample)
+
+    return samples
+
+
 def _annotate_points(ax: plt.Axes, points: Sequence[Point3D]) -> None:
     for point in points:
         color = '#166534' if point.z > 0 else ('#991b1b' if point.z < 0 else '#1d4ed8')
@@ -253,7 +278,8 @@ def _decode_floorplan(image_data: Optional[str]) -> Optional[np.ndarray]:
         encoded = image_data.split(",", 1)[1] if image_data.startswith("data:") else image_data
         image = Image.open(BytesIO(base64.b64decode(encoded))).convert("RGBA")
         return np.array(image)
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to decode floorplan image: %s", exc)
         return None
 
 
@@ -489,19 +515,26 @@ class FameUIPipeline:
             payload.unit,
             bool(payload.floorplan_image),
         )
-        print(
-            "[FAME_UI] Processing payload -> boundary=%s points=%s spacing=%.3f %s floorplan=%s"
-            % (
-                _summarize_boundary(payload.boundary),
-                _summarize_points(payload.points),
-                payload.spacing,
-                payload.unit,
-                bool(payload.floorplan_image),
-            )
-        )
 
-        points_array = np.array([[p.x, p.y] for p in payload.points])
-        z_array = np.array([p.z for p in payload.points])
+        boundary_coords: List[Tuple[float, float]] = [(p.x, p.y) for p in payload.boundary]
+        if boundary_coords[0] != boundary_coords[-1]:
+            boundary_coords.append(boundary_coords[0])
+
+        boundary_points = np.array(boundary_coords, dtype=float)
+        measurement_points = np.array([[p.x, p.y] for p in payload.points], dtype=float)
+        z_values = np.array([p.z for p in payload.points], dtype=float)
+
+        boundary_samples = _generate_boundary_samples(boundary_points, max(payload.spacing, 0.1))
+        if boundary_samples:
+            tree = cKDTree(measurement_points)
+            sample_points = np.array(boundary_samples, dtype=float)
+            _, nearest_idx = tree.query(sample_points)
+            sample_z = z_values[nearest_idx]
+            interp_points = np.vstack([measurement_points, sample_points])
+            interp_values = np.concatenate([z_values, sample_z])
+        else:
+            interp_points = measurement_points
+            interp_values = z_values
 
         min_x, max_x, min_y, max_y = polygon_bounds(polygon)
         grid_x, grid_y = np.meshgrid(
@@ -509,9 +542,8 @@ class FameUIPipeline:
             np.linspace(min_y, max_y, self.grid_resolution),
         )
 
-        interpolated = _interpolate_surface(points_array, z_array, grid_x, grid_y)
+        interpolated = _interpolate_surface(interp_points, interp_values, grid_x, grid_y)
         logger.info(_summarize_grid('Interpolated grid', interpolated))
-        print("[FAME_UI] %s" % _summarize_grid('Interpolated grid', interpolated))
 
         mask = ~path.contains_points(np.vstack((grid_x.flatten(), grid_y.flatten())).T)
         mask = mask.reshape(grid_x.shape)
@@ -526,6 +558,10 @@ class FameUIPipeline:
         logger.info('Generated %d profile lines', len(profile_lines))
         print(f"[FAME_UI] Generated {len(profile_lines)} profile lines")
         floorplan_array = _decode_floorplan(payload.floorplan_image)
+        if floorplan_array is None:
+            logger.info('No floorplan image supplied or decoding failed')
+        else:
+            logger.info('Decoded floorplan image with shape %s', floorplan_array.shape)
         color_scale = _compute_color_scale(masked_grid)
         logger.info('Color scale: vmin=%.3f vmax=%.3f levels=%d', color_scale.vmin, color_scale.vmax, len(color_scale.levels))
         print(
