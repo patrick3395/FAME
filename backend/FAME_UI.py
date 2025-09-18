@@ -177,14 +177,14 @@ def _annotate_points(ax: plt.Axes, points: Sequence[Point3D]) -> None:
         label_value = point.label if point.label else f"{point.z:.1f}"
         label = f"({label_value})"
 
-        ax.scatter(point.x, point.y, c=color, edgecolors=marker_edge, linewidths=0.6, s=28, zorder=7)
+        ax.scatter(point.x, point.y, c=color, edgecolors=marker_edge, linewidths=0.6, s=32, zorder=7)
         ax.text(
             point.x,
-            point.y - 0.6,
+            point.y + 0.8,
             label,
-            color='#1f2937',
-            fontsize=6,
-            fontweight='normal',
+            color=color,
+            fontsize=7,
+            fontweight='medium',
             ha='center',
             va='top',
             zorder=8,
@@ -369,7 +369,7 @@ def _autocrop_floorplan(image: np.ndarray) -> np.ndarray:
     return crop
 
 
-def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional[np.ndarray], alpha: float = 0.35):
+def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional[np.ndarray], alpha: float = 0.9):
     if floorplan_array is None:
         return
 
@@ -381,7 +381,7 @@ def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional
         extent=(min_x, max_x, min_y, max_y),
         origin="upper",
         alpha=alpha,
-        zorder=5,
+        zorder=20,
         interpolation="bilinear",
     )
 
@@ -452,7 +452,7 @@ def plot_heatmap(
         cmap=color_scale.cmap,
         norm=color_scale.norm,
         zorder=1,
-        alpha=0.65,
+        alpha=0.35,
     )
     _draw_floorplan(ax, polygon, floorplan_array)
     cbar = fig.colorbar(
@@ -502,7 +502,7 @@ def plot_repair_plan(
         levels=color_scale.levels,
         cmap=color_scale.cmap,
         norm=color_scale.norm,
-        alpha=0.6,
+        alpha=0.35,
         zorder=1,
     )
     _draw_floorplan(ax, polygon, floorplan_array)
@@ -568,7 +568,7 @@ def plot_profiles(
         levels=color_scale.levels,
         cmap=color_scale.cmap,
         norm=color_scale.norm,
-        alpha=0.6,
+        alpha=0.35,
         zorder=1,
     )
     _draw_floorplan(ax, polygon, floorplan_array)
