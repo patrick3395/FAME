@@ -28,6 +28,8 @@ plt.ioff()
 
 BACKEND_REVISION_TAG = "backend-v1"
 
+FLOORPLAN_ALPHA = 0.35
+
 logger = logging.getLogger('FAME_UI')
 if not logger.handlers:
     handler = logging.StreamHandler()
@@ -174,14 +176,15 @@ def _annotate_points(ax: plt.Axes, points: Sequence[Point3D]) -> None:
     for point in points:
         color = '#166534' if point.z > 0 else ('#991b1b' if point.z < 0 else '#1d4ed8')
         marker_edge = '#111827'
-        label_value = point.label if point.label else f"{point.z:.1f}"
-        label = f"({label_value})"
+        value_text = f"{point.z:.1f}"
+        if point.z > 0:
+            value_text = f"+{value_text}"
 
         ax.scatter(point.x, point.y, c=color, edgecolors=marker_edge, linewidths=0.6, s=32, zorder=7)
         ax.text(
             point.x,
             point.y + 1.2,
-            label,
+            value_text,
             color=color,
             fontsize=9,
             fontweight='medium',
@@ -369,7 +372,7 @@ def _autocrop_floorplan(image: np.ndarray) -> np.ndarray:
     return crop
 
 
-def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional[np.ndarray], alpha: float = 0.5):
+def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional[np.ndarray], alpha: float = FLOORPLAN_ALPHA):
     if floorplan_array is None:
         return
 
@@ -466,7 +469,6 @@ def plot_heatmap(
         cmap=color_scale.cmap,
         norm=color_scale.norm,
         zorder=1,
-        alpha=0.55,
     )
     _draw_floorplan(ax, polygon, floorplan_array)
     cbar = fig.colorbar(
@@ -516,7 +518,6 @@ def plot_repair_plan(
         levels=color_scale.levels,
         cmap=color_scale.cmap,
         norm=color_scale.norm,
-        alpha=0.45,
         zorder=1,
     )
     _draw_floorplan(ax, polygon, floorplan_array)
