@@ -1430,6 +1430,7 @@ function FloorPlanSheet({
     setCropHoverPoint(null)
     cropPolygonIdRef.current = 1
     setAppliedCropPolygon(null)
+    setAppliedBorderPoints([])
   }
 
   const cropHasSelection = isCropPolygonClosed && cropPolygon.length >= 3

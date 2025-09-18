@@ -174,22 +174,21 @@ def _annotate_points(ax: plt.Axes, points: Sequence[Point3D]) -> None:
     for point in points:
         color = '#166534' if point.z > 0 else ('#991b1b' if point.z < 0 else '#1d4ed8')
         marker_edge = '#111827'
-        label = f"{point.z:+.1f}"
-        if point.label:
-            label += f" ({point.label})"
+        label_value = point.label if point.label else f"{point.z:.1f}"
+        label = f"({label_value})"
 
-        ax.scatter(point.x, point.y, c=color, edgecolors=marker_edge, linewidths=0.8, s=36, zorder=7)
+        ax.scatter(point.x, point.y, c=color, edgecolors=marker_edge, linewidths=0.6, s=28, zorder=7)
         ax.text(
             point.x,
-            point.y + 0.8,
+            point.y - 0.6,
             label,
-            color=color,
-            fontsize=9,
-            fontweight='bold',
+            color='#1f2937',
+            fontsize=6,
+            fontweight='normal',
             ha='center',
-            va='bottom',
+            va='top',
             zorder=8,
-            path_effects=[PathEffects.withStroke(linewidth=1.6, foreground='white')],
+            path_effects=[PathEffects.withStroke(linewidth=1.0, foreground='white')],
         )
 
 
@@ -370,7 +369,7 @@ def _autocrop_floorplan(image: np.ndarray) -> np.ndarray:
     return crop
 
 
-def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional[np.ndarray], alpha: float = 0.85):
+def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional[np.ndarray], alpha: float = 0.35):
     if floorplan_array is None:
         return
 
@@ -453,7 +452,7 @@ def plot_heatmap(
         cmap=color_scale.cmap,
         norm=color_scale.norm,
         zorder=1,
-        alpha=0.45,
+        alpha=0.65,
     )
     _draw_floorplan(ax, polygon, floorplan_array)
     cbar = fig.colorbar(
@@ -503,10 +502,9 @@ def plot_repair_plan(
         levels=color_scale.levels,
         cmap=color_scale.cmap,
         norm=color_scale.norm,
-        alpha=0.4,
+        alpha=0.6,
         zorder=1,
     )
-    _draw_floorplan(ax, polygon, floorplan_array)
     _draw_floorplan(ax, polygon, floorplan_array)
     contour_lines = ax.contour(
         grid_x,
@@ -570,9 +568,10 @@ def plot_profiles(
         levels=color_scale.levels,
         cmap=color_scale.cmap,
         norm=color_scale.norm,
-        alpha=0.4,
+        alpha=0.6,
         zorder=1,
     )
+    _draw_floorplan(ax, polygon, floorplan_array)
     ax.add_collection(
         PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="#2563eb", linewidth=2, zorder=6)
     )
