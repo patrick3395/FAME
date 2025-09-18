@@ -466,7 +466,7 @@ def plot_heatmap(
         cmap=color_scale.cmap,
         norm=color_scale.norm,
         zorder=1,
-        alpha=0.0,
+        alpha=0.55,
     )
     _draw_floorplan(ax, polygon, floorplan_array)
     cbar = fig.colorbar(
@@ -516,7 +516,7 @@ def plot_repair_plan(
         levels=color_scale.levels,
         cmap=color_scale.cmap,
         norm=color_scale.norm,
-        alpha=0.0,
+        alpha=0.45,
         zorder=1,
     )
     _draw_floorplan(ax, polygon, floorplan_array)
@@ -582,7 +582,7 @@ def plot_profiles(
         levels=color_scale.levels,
         cmap=color_scale.cmap,
         norm=color_scale.norm,
-        alpha=0.0,
+        alpha=0.45,
         zorder=1,
     )
     _draw_floorplan(ax, polygon, floorplan_array)
