@@ -29,6 +29,10 @@ plt.ioff()
 BACKEND_REVISION_TAG = "backend-v1"
 
 FLOORPLAN_ALPHA = 1.0
+HEATMAP_ALPHA = 0.9
+REPAIR_PLAN_ALPHA = 0.8
+DIAGONAL_SPACING = 4.0
+DIAGONAL_INTERIOR_STEPS = 8
 
 logger = logging.getLogger('FAME_UI')
 if not logger.handlers:
@@ -219,6 +223,67 @@ def _scan_cartesian_intersections(polygon: np.ndarray, value: float, horizontal:
     return intersections
 
 
+def _sample_boundary_for_diagonals(coords: Sequence[Tuple[float, float]], spacing: float) -> List[Tuple[float, float]]:
+    if not coords:
+        return []
+
+    if spacing <= 0:
+        return [(float(x), float(y)) for x, y in coords]
+
+    samples: List[Tuple[float, float]] = []
+    num_coords = len(coords)
+    for idx in range(num_coords):
+        start = np.array(coords[idx], dtype=float)
+        end = np.array(coords[(idx + 1) % num_coords], dtype=float)
+        samples.append((float(start[0]), float(start[1])))
+
+        segment = end - start
+        length = float(np.hypot(segment[0], segment[1]))
+        if length <= 1e-6:
+            continue
+
+        steps = int(math.floor(length / spacing))
+        for step in range(1, steps + 1):
+            distance = step * spacing
+            if distance >= length:
+                break
+            t = distance / length
+            point = start + t * segment
+            samples.append((float(point[0]), float(point[1])))
+
+    unique_samples: List[Tuple[float, float]] = []
+    seen = set()
+    for pt in samples:
+        key = (round(pt[0], 4), round(pt[1], 4))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_samples.append(pt)
+
+    return unique_samples
+
+
+def _segment_within_polygon(
+    start: Tuple[float, float],
+    end: Tuple[float, float],
+    polygon_path: Path,
+    steps: int = DIAGONAL_INTERIOR_STEPS,
+) -> bool:
+    sx, sy = start
+    ex, ey = end
+    length = math.hypot(ex - sx, ey - sy)
+    base_steps = max(steps, int(math.ceil(length / max(DIAGONAL_SPACING, 1e-6))))
+    if base_steps <= 1:
+        base_steps = 2
+
+    for step in range(1, base_steps):
+        t = step / base_steps
+        point = (sx + (ex - sx) * t, sy + (ey - sy) * t)
+        if not polygon_path.contains_point(point, radius=1e-9):
+            return False
+    return True
+
+
 def _generate_profile_lines_from_boundary(boundary: Sequence[BoundaryPoint], polygon_path: Path) -> List[Dict[str, Tuple[float, float]]]:
     coords = [(point.x, point.y) for point in boundary]
     if len(coords) < 3:
@@ -236,7 +301,7 @@ def _generate_profile_lines_from_boundary(boundary: Sequence[BoundaryPoint], pol
             start = (xs[i], y)
             end = (xs[i + 1], y)
             midpoint = ((start[0] + end[0]) / 2.0, y)
-            if polygon_path.contains_point(midpoint):
+            if polygon_path.contains_point(midpoint, radius=1e-9):
                 lines.append({'start': start, 'end': end})
 
     vertical_levels = np.linspace(min_x, max_x, 42)[1:-1]
@@ -246,14 +311,20 @@ def _generate_profile_lines_from_boundary(boundary: Sequence[BoundaryPoint], pol
             start = (x, ys[i])
             end = (x, ys[i + 1])
             midpoint = (x, (start[1] + end[1]) / 2.0)
-            if polygon_path.contains_point(midpoint):
+            if polygon_path.contains_point(midpoint, radius=1e-9):
                 lines.append({'start': start, 'end': end})
 
-    num_coords = len(coords)
-    for i in range(num_coords):
-        start = coords[i]
-        for j in range(i + 1, num_coords):
-            end = coords[j]
+    diagonal_points = _sample_boundary_for_diagonals(coords, DIAGONAL_SPACING)
+    num_diagonal = len(diagonal_points)
+    for i in range(num_diagonal):
+        start = diagonal_points[i]
+        for j in range(i + 1, num_diagonal):
+            end = diagonal_points[j]
+            midpoint = ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
+            if not polygon_path.contains_point(midpoint, radius=1e-9):
+                continue
+            if not _segment_within_polygon(start, end, polygon_path, DIAGONAL_INTERIOR_STEPS):
+                continue
             lines.append({'start': start, 'end': end})
 
     for idx in range(len(coords)):
@@ -441,6 +512,7 @@ def plot_heatmap(
         cmap=color_scale.cmap,
         norm=color_scale.norm,
         zorder=1,
+        alpha=HEATMAP_ALPHA,
     )
     _draw_floorplan(ax, polygon, floorplan_array)
     cbar = fig.colorbar(
@@ -491,6 +563,7 @@ def plot_repair_plan(
         cmap=color_scale.cmap,
         norm=color_scale.norm,
         zorder=1,
+        alpha=REPAIR_PLAN_ALPHA,
     )
     _draw_floorplan(ax, polygon, floorplan_array)
     contour_lines = ax.contour(
@@ -518,10 +591,7 @@ def plot_repair_plan(
     ax.add_collection(
         PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="#0f172a", linewidth=2, zorder=6)
     )
-    for line in profile_lines:
-        (x1, y1) = line["start"]
-        (x2, y2) = line["end"]
-        ax.plot([x1, x2], [y1, y2], color="white", linestyle="--", linewidth=1.1, alpha=0.35, zorder=7)
+
     _annotate_points(ax, points)
     min_x, max_x, min_y, max_y = polygon_bounds(polygon)
     pad = max(max_x - min_x, max_y - min_y) * 0.1
@@ -555,7 +625,7 @@ def plot_profiles(
         levels=color_scale.levels,
         cmap=color_scale.cmap,
         norm=color_scale.norm,
-        alpha=0.45,
+        alpha=REPAIR_PLAN_ALPHA,
         zorder=1,
     )
     _draw_floorplan(ax, polygon, floorplan_array)
