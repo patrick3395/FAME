@@ -28,7 +28,7 @@ plt.ioff()
 
 BACKEND_REVISION_TAG = "backend-v1"
 
-FLOORPLAN_ALPHA = 0.35
+FLOORPLAN_ALPHA = 1.0
 
 logger = logging.getLogger('FAME_UI')
 if not logger.handlers:
@@ -219,21 +219,6 @@ def _scan_cartesian_intersections(polygon: np.ndarray, value: float, horizontal:
     return intersections
 
 
-def _scan_diagonal_intersections(polygon: np.ndarray, slope: float, offset: float) -> List[Tuple[float, float]]:
-    points: List[Tuple[float, float]] = []
-    for (x1, y1), (x2, y2) in zip(polygon[:-1], polygon[1:]):
-        denom = (y2 - y1) - slope * (x2 - x1)
-        if math.isclose(denom, 0.0):
-            continue
-        t = (slope * x1 + offset - y1) / denom
-        if 0.0 <= t <= 1.0:
-            x = x1 + t * (x2 - x1)
-            y = y1 + t * (y2 - y1)
-            points.append((x, y))
-    points.sort(key=lambda p: p[0] + p[1])
-    return points
-
-
 def _generate_profile_lines_from_boundary(boundary: Sequence[BoundaryPoint], polygon_path: Path) -> List[Dict[str, Tuple[float, float]]]:
     coords = [(point.x, point.y) for point in boundary]
     if len(coords) < 3:
@@ -264,25 +249,12 @@ def _generate_profile_lines_from_boundary(boundary: Sequence[BoundaryPoint], pol
             if polygon_path.contains_point(midpoint):
                 lines.append({'start': start, 'end': end})
 
-    diag_levels_pos = np.linspace((min_y - min_x), (max_y - max_x), 30)
-    for c in diag_levels_pos:
-        pts = _scan_diagonal_intersections(polygon, 1.0, c)
-        for i in range(0, len(pts) - 1, 2):
-            start = pts[i]
-            end = pts[i + 1]
-            midpoint = ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
-            if polygon_path.contains_point(midpoint):
-                lines.append({'start': start, 'end': end})
-
-    diag_levels_neg = np.linspace((min_y + max_x), (max_y + min_x), 30)
-    for c in diag_levels_neg:
-        pts = _scan_diagonal_intersections(polygon, -1.0, c)
-        for i in range(0, len(pts) - 1, 2):
-            start = pts[i]
-            end = pts[i + 1]
-            midpoint = ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
-            if polygon_path.contains_point(midpoint):
-                lines.append({'start': start, 'end': end})
+    num_coords = len(coords)
+    for i in range(num_coords):
+        start = coords[i]
+        for j in range(i + 1, num_coords):
+            end = coords[j]
+            lines.append({'start': start, 'end': end})
 
     for idx in range(len(coords)):
         start = coords[idx]
@@ -779,6 +751,3 @@ def run_analysis():
 
 if __name__ == "__main__":  # pragma: no cover
     app.run(debug=True)
-
-
-
