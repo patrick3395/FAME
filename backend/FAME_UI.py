@@ -379,6 +379,8 @@ def plot_heatmap(
     )
     cbar.formatter = ticker.FormatStrFormatter('%.1f')
     cbar.update_ticks()
+    cbar.formatter = ticker.FormatStrFormatter('%.1f')
+    cbar.update_ticks()
     ax.add_collection(
         PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="black", linewidth=1.5, zorder=2)
     )
@@ -392,7 +394,6 @@ def plot_heatmap(
     ax.set_xlabel('Left to Right')
     ax.set_ylabel('Bottom to Top')
     ax.set_aspect("equal", adjustable="box")
-    cbar.ax.set_yticklabels([f"{tick:.1f}" for tick in cbar.get_ticks()])
     return to_base64(fig)
 
 
@@ -439,6 +440,8 @@ def plot_repair_plan(
     )
     cbar.formatter = ticker.FormatStrFormatter('%.1f')
     cbar.update_ticks()
+    cbar.formatter = ticker.FormatStrFormatter('%.1f')
+    cbar.update_ticks()
     ax.add_collection(
         PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="#0f172a", linewidth=2, zorder=3)
     )
@@ -456,7 +459,6 @@ def plot_repair_plan(
     ax.set_xlabel('Left to Right')
     ax.set_ylabel('Bottom to Top')
     ax.set_aspect("equal", adjustable="box")
-    cbar.ax.set_yticklabels([f"{tick:.1f}" for tick in cbar.get_ticks()])
     return to_base64(fig)
 
 
@@ -510,6 +512,8 @@ def plot_profiles(
     )
     cbar.formatter = ticker.FormatStrFormatter('%.1f')
     cbar.update_ticks()
+    cbar.formatter = ticker.FormatStrFormatter('%.1f')
+    cbar.update_ticks()
     min_x, max_x, min_y, max_y = polygon_bounds(polygon)
     pad = max(max_x - min_x, max_y - min_y) * 0.1
     ax.set_xlim(min_x - pad, max_x + pad)
@@ -519,7 +523,6 @@ def plot_profiles(
     ax.set_xlabel('Left to Right')
     ax.set_ylabel('Bottom to Top')
     ax.set_aspect("equal", adjustable="box")
-    cbar.ax.set_yticklabels([f"{tick:.1f}" for tick in cbar.get_ticks()])
     return to_base64(fig)
 
 
