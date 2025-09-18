@@ -293,7 +293,7 @@ def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional
     ax.imshow(
         floorplan_array,
         extent=(min_x, max_x, min_y, max_y),
-        origin="lower",
+        origin="upper",
         alpha=alpha,
         zorder=0,
     )
@@ -379,6 +379,11 @@ def plot_heatmap(
         PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="black", linewidth=1.5, zorder=2)
     )
     _annotate_points(ax, points)
+    min_x, max_x, min_y, max_y = polygon_bounds(polygon)
+    pad = max(max_x - min_x, max_y - min_y) * 0.03
+    ax.set_xlim(min_x - pad, max_x + pad)
+    ax.set_ylim(min_y - pad, max_y + pad)
+    ax.invert_yaxis()
     ax.set_title(title)
     ax.set_xlabel('Left to Right')
     ax.set_ylabel('Bottom to Top')
@@ -435,6 +440,11 @@ def plot_repair_plan(
         (x2, y2) = line["end"]
         ax.plot([x1, x2], [y1, y2], color="white", linestyle="--", linewidth=1.1, alpha=0.35, zorder=4)
     _annotate_points(ax, points)
+    min_x, max_x, min_y, max_y = polygon_bounds(polygon)
+    pad = max(max_x - min_x, max_y - min_y) * 0.03
+    ax.set_xlim(min_x - pad, max_x + pad)
+    ax.set_ylim(min_y - pad, max_y + pad)
+    ax.invert_yaxis()
     ax.set_title(title)
     ax.set_xlabel('Left to Right')
     ax.set_ylabel('Bottom to Top')
@@ -490,6 +500,11 @@ def plot_profiles(
         label="Elevation",
         extend="both",
     )
+    min_x, max_x, min_y, max_y = polygon_bounds(polygon)
+    pad = max(max_x - min_x, max_y - min_y) * 0.03
+    ax.set_xlim(min_x - pad, max_x + pad)
+    ax.set_ylim(min_y - pad, max_y + pad)
+    ax.invert_yaxis()
     ax.set_title(title)
     ax.set_xlabel('Left to Right')
     ax.set_ylabel('Bottom to Top')
