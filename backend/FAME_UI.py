@@ -28,9 +28,9 @@ plt.ioff()
 
 BACKEND_REVISION_TAG = "backend-v1"
 
-FLOORPLAN_ALPHA = 1.0
-HEATMAP_ALPHA = 0.9
-REPAIR_PLAN_ALPHA = 0.8
+FLOORPLAN_ALPHA = 0.0
+HEATMAP_ALPHA = 0.6
+REPAIR_PLAN_ALPHA = 0.5
 DIAGONAL_SPACING = 4.0
 DIAGONAL_INTERIOR_STEPS = 8
 
@@ -184,13 +184,13 @@ def _annotate_points(ax: plt.Axes, points: Sequence[Point3D]) -> None:
         if point.z > 0:
             value_text = f"+{value_text}"
 
-        ax.scatter(point.x, point.y, c=color, edgecolors=marker_edge, linewidths=0.6, s=32, zorder=7)
+        ax.scatter(point.x, point.y, c=color, edgecolors=marker_edge, linewidths=0.6, s=28.8, zorder=7)
         ax.text(
             point.x,
-            point.y + 1.2,
+            point.y + 1.08,
             value_text,
             color=color,
-            fontsize=9,
+            fontsize=8,
             fontweight='medium',
             ha='center',
             va='top',
@@ -472,12 +472,12 @@ def _compute_color_scale(grid_z: np.ndarray) -> ColorScale:
         data = np.array([0.0])
     data_min = min(float(np.min(data)), 0.0)
     data_max = max(float(np.max(data)), 0.0)
-    lo = math.floor(data_min * 10.0) / 10.0 - 0.3
-    hi = math.ceil(data_max * 10.0) / 10.0 + 0.3
+
+    lo = math.floor((data_min - 1e-6) / 0.2) * 0.2
+    hi = math.ceil((data_max + 1e-6) / 0.2) * 0.2
     if math.isclose(lo, hi):
-        spread = max(abs(lo), abs(hi), 0.5)
-        lo = -spread
-        hi = spread
+        hi = lo + 0.2
+
     zero_ratio = float(np.clip((0.0 - lo) / (hi - lo), 0.0, 1.0))
     cmap = LinearSegmentedColormap.from_list(
         "fame_red_green",
@@ -487,7 +487,7 @@ def _compute_color_scale(grid_z: np.ndarray) -> ColorScale:
             (1.0, "#166534"),
         ],
     )
-    levels = np.linspace(lo, hi, 32)
+    levels = np.arange(lo, hi + 0.2, 0.2)
     if not np.isclose(levels, 0.0).any():
         levels = np.sort(np.append(levels, 0.0))
     norm = TwoSlopeNorm(vmin=lo, vcenter=0.0, vmax=hi)
