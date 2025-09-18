@@ -180,10 +180,10 @@ def _annotate_points(ax: plt.Axes, points: Sequence[Point3D]) -> None:
         ax.scatter(point.x, point.y, c=color, edgecolors=marker_edge, linewidths=0.6, s=32, zorder=7)
         ax.text(
             point.x,
-            point.y + 0.8,
+            point.y + 1.2,
             label,
             color=color,
-            fontsize=7,
+            fontsize=9,
             fontweight='medium',
             ha='center',
             va='top',
@@ -374,10 +374,24 @@ def _draw_floorplan(ax: plt.Axes, polygon: np.ndarray, floorplan_array: Optional
         return
 
     cropped = _autocrop_floorplan(floorplan_array)
-    floorplan_array = np.flipud(cropped)
+    flipped = np.flipud(cropped)
+
+    if flipped.shape[2] == 4:
+        rgba = flipped.copy()
+    else:
+        alpha_channel = np.full(flipped.shape[:2], 255, dtype=flipped.dtype)
+        rgba = np.dstack([flipped, alpha_channel])
+
+    rgb = rgba[:, :, :3].astype(np.float32)
+    grayscale = rgb.mean(axis=2)
+    transparent_mask = grayscale >= 245
+    if transparent_mask.any():
+        rgba = rgba.copy()
+        rgba[transparent_mask, 3] = 0
+
     min_x, max_x, min_y, max_y = polygon_bounds(polygon)
     ax.imshow(
-        floorplan_array,
+        rgba,
         extent=(min_x, max_x, min_y, max_y),
         origin="upper",
         alpha=alpha,
