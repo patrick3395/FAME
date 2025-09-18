@@ -17,6 +17,7 @@ from matplotlib.path import Path
 from matplotlib.patches import Polygon as MplPolygon
 from matplotlib.collections import PatchCollection
 from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
+from matplotlib import ticker
 import matplotlib.patheffects as PathEffects
 from PIL import Image
 from scipy.interpolate import griddata
@@ -376,6 +377,8 @@ def plot_heatmap(
         label="Elevation",
         extend="both",
     )
+    cbar.formatter = ticker.FormatStrFormatter('%.1f')
+    cbar.update_ticks()
     ax.add_collection(
         PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="black", linewidth=1.5, zorder=2)
     )
@@ -434,6 +437,8 @@ def plot_repair_plan(
         label="Elevation",
         extend="both",
     )
+    cbar.formatter = ticker.FormatStrFormatter('%.1f')
+    cbar.update_ticks()
     ax.add_collection(
         PatchCollection([MplPolygon(polygon)], facecolor="none", edgecolor="#0f172a", linewidth=2, zorder=3)
     )
@@ -503,6 +508,8 @@ def plot_profiles(
         label="Elevation",
         extend="both",
     )
+    cbar.formatter = ticker.FormatStrFormatter('%.1f')
+    cbar.update_ticks()
     min_x, max_x, min_y, max_y = polygon_bounds(polygon)
     pad = max(max_x - min_x, max_y - min_y) * 0.1
     ax.set_xlim(min_x - pad, max_x + pad)
