@@ -6,7 +6,7 @@ import dataclasses
 import math
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Dict, Iterable, List, Sequence, Tuple, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import logging
@@ -23,6 +23,8 @@ from PIL import Image
 from scipy.interpolate import griddata
 from scipy.spatial import Delaunay, cKDTree
 
+from fame_line_calculator import ExcelCalculator
+
 # Use non-interactive backend so the service can render off-screen
 plt.ioff()
 
@@ -33,6 +35,9 @@ HEATMAP_ALPHA = 0.6
 REPAIR_PLAN_ALPHA = 0.5
 DIAGONAL_SPACING = 4.0
 DIAGONAL_INTERIOR_STEPS = 8
+
+DEFAULT_EFFECTIVE_LENGTH = 20.0
+DEFAULT_PROFILE_POINT_COUNT = 13
 
 logger = logging.getLogger('FAME_UI')
 if not logger.handlers:
@@ -101,6 +106,7 @@ class AnalysisPayload:
 class AnalysisResult:
     images: Dict[str, str]
     profile_lines: List[Dict[str, Tuple[float, float]]]
+    line_calculations: List[Dict[str, Any]]
 
 @dataclass(frozen=True)
 class ColorScale:
@@ -109,6 +115,17 @@ class ColorScale:
     levels: np.ndarray
     vmin: float
     vmax: float
+
+
+@dataclass
+class LineAnalysisSummary:
+    name: str
+    start: Tuple[float, float]
+    end: Tuple[float, float]
+    points: np.ndarray
+    lengths: np.ndarray
+    z_values: np.ndarray
+    metrics: Dict[str, float | int | str]
 
 
 def _summarize_points(points: Sequence[Point3D]) -> str:
@@ -344,6 +361,250 @@ def _generate_profile_lines_from_boundary(boundary: Sequence[BoundaryPoint], pol
         deduped.append(line)
 
     return deduped
+
+
+def _sample_line_points(
+    start: Tuple[float, float],
+    end: Tuple[float, float],
+    num_samples: int,
+    interpolation_points: np.ndarray,
+    interpolation_values: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    start_arr = np.asarray(start, dtype=float)
+    end_arr = np.asarray(end, dtype=float)
+    if num_samples < 2:
+        num_samples = 2
+    t = np.linspace(0.0, 1.0, num_samples, dtype=float)
+    coords = start_arr + (end_arr - start_arr)[None, :] * t[:, None]
+
+    values_linear = griddata(interpolation_points, interpolation_values, coords, method='linear')
+    if values_linear is None:
+        values_linear = np.full(t.shape, np.nan, dtype=float)
+    else:
+        values_linear = np.asarray(values_linear, dtype=float)
+
+    if np.isnan(values_linear).any():
+        values_nearest = griddata(interpolation_points, interpolation_values, coords, method='nearest')
+        if values_nearest is not None:
+            values_nearest = np.asarray(values_nearest, dtype=float)
+            mask = np.isnan(values_linear)
+            values_linear[mask] = values_nearest[mask]
+
+    if np.isnan(values_linear).any():
+        finite = interpolation_values[np.isfinite(interpolation_values)]
+        fallback = float(np.mean(finite)) if finite.size else 0.0
+        values_linear = np.where(np.isnan(values_linear), fallback, values_linear)
+
+    lengths = np.linalg.norm(coords - start_arr, axis=1)
+    return coords, lengths, values_linear
+
+
+def _collect_deflection_segments(analysis: LineAnalysisSummary) -> List[np.ndarray]:
+    segments: List[np.ndarray] = []
+    for idx in range(1, 6):
+        if analysis.metrics.get(f'exceeds{idx}') != 'YES':
+            continue
+        start_idx = int(analysis.metrics.get(f'd{idx}pt1', 0)) - 1
+        end_idx = int(analysis.metrics.get(f'd{idx}pt3', 0)) - 1
+        if start_idx < 0 or end_idx < 0:
+            continue
+        start_idx = min(start_idx, len(analysis.points) - 1)
+        end_idx = min(end_idx, len(analysis.points) - 1)
+        if end_idx < start_idx:
+            start_idx, end_idx = end_idx, start_idx
+        segment = analysis.points[start_idx : end_idx + 1]
+        if segment.size == 0:
+            continue
+        segments.append(segment)
+    return segments
+
+
+def _serialize_line_analysis(analysis: LineAnalysisSummary) -> Dict[str, Any]:
+    summary: Dict[str, Any] = {
+        'name': analysis.name,
+        'start': {'x': float(analysis.start[0]), 'y': float(analysis.start[1])},
+        'end': {'x': float(analysis.end[0]), 'y': float(analysis.end[1])},
+        'points': [{'x': float(pt[0]), 'y': float(pt[1])} for pt in analysis.points],
+        'lengths': [float(val) for val in analysis.lengths],
+        'zValues': [float(val) for val in analysis.z_values],
+        'kFactor': {
+            'length': float(analysis.metrics.get('k_length', 0.0)),
+            'width': float(analysis.metrics.get('k_width', 0.0)),
+            'factor': float(analysis.metrics.get('k_factor', 0.0)),
+            'limit360': float(analysis.metrics.get('limit_360', 0.0)),
+        },
+    }
+
+    deflections: List[Dict[str, Any]] = []
+    for idx in range(1, 6):
+        deflections.append({
+            'index': idx,
+            'ratio': float(analysis.metrics.get(f'd{idx}a', 0.0)),
+            'percent': float(analysis.metrics.get(f'd{idx}per', 0.0)),
+            'exceeds': str(analysis.metrics.get(f'exceeds{idx}', 'NO')),
+            'startIndex': int(analysis.metrics.get(f'd{idx}pt1', 0)),
+            'midIndex': int(analysis.metrics.get(f'd{idx}pt2', 0)),
+            'endIndex': int(analysis.metrics.get(f'd{idx}pt3', 0)),
+            'text': str(analysis.metrics.get(f'text{idx}', '')),
+        })
+    summary['deflections'] = deflections
+
+    summary['tilt'] = {
+        'value': float(analysis.metrics.get('tilt', 0.0)),
+        'percent': float(analysis.metrics.get('tilt_percent', 0.0)),
+        'exceeds': str(analysis.metrics.get('exceeds6', 'NO')),
+        'text': str(analysis.metrics.get('tilt_text', '')),
+    }
+
+    return summary
+
+
+def _plot_failure_map(
+    grid_x: np.ndarray,
+    grid_y: np.ndarray,
+    grid_z: np.ndarray,
+    polygon: np.ndarray,
+    boundary: Sequence[BoundaryPoint],
+    points: Sequence[Point3D],
+    title: str,
+    color_scale: ColorScale,
+    floorplan_array: Optional[np.ndarray],
+    analyses: Sequence[LineAnalysisSummary],
+    failure_mode: str,
+) -> str:
+    fig, ax = plt.subplots(figsize=(10, 8))
+    grid_values = grid_z.filled(np.nan) if np.ma.isMaskedArray(grid_z) else grid_z
+    contour = ax.contourf(
+        grid_x,
+        grid_y,
+        grid_values,
+        levels=color_scale.levels,
+        cmap=color_scale.cmap,
+        norm=color_scale.norm,
+        alpha=REPAIR_PLAN_ALPHA,
+        zorder=1,
+    )
+    _draw_floorplan(ax, polygon, floorplan_array)
+
+    boundary_coords = [(p.x, p.y) for p in boundary]
+    ax.plot(
+        [pt[0] for pt in boundary_coords + boundary_coords[:1]],
+        [pt[1] for pt in boundary_coords + boundary_coords[:1]],
+        color='#0f172a',
+        linewidth=2,
+        zorder=6,
+    )
+
+    if failure_mode == 'deflection':
+        line_color = '#b91c1c'
+        line_style = '--'
+    else:
+        line_color = '#d97706'
+        line_style = '-'
+
+    for analysis in analyses:
+        if failure_mode == 'deflection':
+            segments = _collect_deflection_segments(analysis)
+            if not segments:
+                continue
+            all_points = np.vstack(segments)
+            for segment in segments:
+                ax.plot(segment[:, 0], segment[:, 1], color=line_color, linestyle=line_style, linewidth=1.8, zorder=7)
+        else:
+            segment = np.vstack([analysis.points[0], analysis.points[-1]])
+            all_points = segment
+            ax.plot(segment[:, 0], segment[:, 1], color=line_color, linestyle=line_style, linewidth=2.0, zorder=7)
+
+        midpoint = all_points.mean(axis=0)
+        ax.text(
+            midpoint[0],
+            midpoint[1],
+            analysis.name,
+            color='#111827',
+            fontsize=8,
+            fontweight='bold',
+            ha='center',
+            va='center',
+            zorder=8,
+            path_effects=[PathEffects.withStroke(linewidth=1.0, foreground='white')],
+        )
+
+    _annotate_points(ax, points)
+
+    cbar = fig.colorbar(
+        contour,
+        ax=ax,
+        shrink=0.5,
+        pad=0.08,
+        label='Elevation',
+        extend='both',
+    )
+    cbar.formatter = ticker.FormatStrFormatter('%.1f')
+    cbar.update_ticks()
+
+    min_x, max_x, min_y, max_y = polygon_bounds(polygon)
+    pad = max(max_x - min_x, max_y - min_y) * 0.1
+    ax.set_xlim(min_x - pad, max_x + pad)
+    ax.set_ylim(min_y - pad, max_y + pad)
+    ax.invert_yaxis()
+    ax.set_title(title)
+    ax.set_xlabel('Left to Right')
+    ax.set_ylabel('Bottom to Top')
+    ax.set_aspect('equal', adjustable='box')
+    return to_base64(fig)
+
+
+def _analyze_profile_lines(
+    profile_lines: Sequence[Dict[str, Tuple[float, float]]],
+    interpolation_points: np.ndarray,
+    interpolation_values: np.ndarray,
+    calculator: ExcelCalculator,
+    num_samples: int,
+) -> List[LineAnalysisSummary]:
+    analyses: List[LineAnalysisSummary] = []
+    if interpolation_points.size == 0:
+        return analyses
+
+    for idx, line in enumerate(profile_lines, start=1):
+        start = tuple(line['start'])
+        end = tuple(line['end'])
+        if np.allclose(start, end):
+            continue
+
+        coords, lengths, z_values = _sample_line_points(
+            start,
+            end,
+            num_samples,
+            interpolation_points,
+            interpolation_values,
+        )
+
+        if not np.isfinite(z_values).any():
+            continue
+
+        metrics = calculator.calculate_line_profile(
+            start_x=start[0],
+            start_y=start[1],
+            end_x=end[0],
+            end_y=end[1],
+            lengths=lengths,
+            z_values=z_values,
+        )
+        line_name = metrics.get('line_name') or f'L{idx}'
+        metrics['line_name'] = line_name
+        analyses.append(
+            LineAnalysisSummary(
+                name=str(line_name),
+                start=start,
+                end=end,
+                points=coords,
+                lengths=lengths,
+                z_values=z_values,
+                metrics=metrics,
+            )
+        )
+
+    return analyses
 
 
 # ---------------------------------------------------------------------------
@@ -675,8 +936,16 @@ def plot_profiles(
 
 
 class FameUIPipeline:
-    def __init__(self, grid_resolution: int = 200):
+    def __init__(
+        self,
+        grid_resolution: int = 200,
+        effective_length: float = DEFAULT_EFFECTIVE_LENGTH,
+        profile_point_count: int = DEFAULT_PROFILE_POINT_COUNT,
+    ):
         self.grid_resolution = grid_resolution
+        self.effective_length = effective_length
+        self.profile_point_count = profile_point_count
+        self.calculator = ExcelCalculator(effective_length=effective_length)
 
     def run(self, payload: AnalysisPayload) -> AnalysisResult:
         polygon = ensure_closed_polygon(payload.boundary)
@@ -709,6 +978,11 @@ class FameUIPipeline:
         else:
             interp_points = measurement_points
             interp_values = z_values
+
+        interpolation_points = np.asarray(interp_points, dtype=float)
+        interpolation_values = np.asarray(interp_values, dtype=float)
+        interp_points = interpolation_points
+        interp_values = interpolation_values
 
         min_x, max_x, min_y, max_y = polygon_bounds(polygon)
         grid_x, grid_y = np.meshgrid(
@@ -779,7 +1053,65 @@ class FameUIPipeline:
             ),
         }
 
-        return AnalysisResult(images=images, profile_lines=profile_lines)
+        line_analyses = _analyze_profile_lines(
+            profile_lines,
+            interpolation_points,
+            interpolation_values,
+            self.calculator,
+            self.profile_point_count,
+        )
+        serialized_lines = [_serialize_line_analysis(item) for item in line_analyses]
+
+        deflection_failures = [
+            analysis
+            for analysis in line_analyses
+            if any(analysis.metrics.get(f'exceeds{i}') == 'YES' for i in range(1, 6))
+        ]
+        tilt_failures = [
+            analysis for analysis in line_analyses if analysis.metrics.get('exceeds6') == 'YES'
+        ]
+        logger.info(
+            'Line analysis completed: total=%d deflection_failures=%d tilt_failures=%d',
+            len(line_analyses),
+            len(deflection_failures),
+            len(tilt_failures),
+        )
+
+        if deflection_failures:
+            images['failed_deflections'] = _plot_failure_map(
+                grid_x,
+                grid_y,
+                masked_grid,
+                polygon,
+                payload.boundary,
+                payload.points,
+                'Failed Deflections',
+                color_scale,
+                floorplan_array,
+                deflection_failures,
+                'deflection',
+            )
+
+        if tilt_failures:
+            images['failed_tilt'] = _plot_failure_map(
+                grid_x,
+                grid_y,
+                masked_grid,
+                polygon,
+                payload.boundary,
+                payload.points,
+                'Failed Tilt',
+                color_scale,
+                floorplan_array,
+                tilt_failures,
+                'tilt',
+            )
+
+        return AnalysisResult(
+            images=images,
+            profile_lines=profile_lines,
+            line_calculations=serialized_lines,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -804,6 +1136,7 @@ def run_analysis():
         response = jsonify({
             "images": result.images,
             "profileLines": result.profile_lines,
+            "lineCalculations": result.line_calculations,
             "unit": payload.unit,
             "version": BACKEND_REVISION_TAG,
         })

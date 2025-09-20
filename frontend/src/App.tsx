@@ -1,3 +1,4 @@
+  const workbookIdRef = useRef<string | null>(null)
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ChangeEvent, MouseEvent, PointerEvent as ReactPointerEvent } from "react"
 import type {
@@ -10,12 +11,14 @@ import type {
   TextData,
   TextSheet,
 } from "./types"
+import type { SheetCellRecord, SheetSummary } from "./types/sheet"
+import { FormattedSheet } from "./sheets/FormattedSheet"
 import {
-  makeCellReference,
   numberToColumnLabel,
   parseCellReference,
 } from "./utils/cellAddress"
 import { expandRangeWithSheet } from "./utils/rangeUtils"
+import { FormulaWorkerClient } from "./utils/formulaWorkerClient"
 import "./App.css"
 
 const MAX_RENDER_ROWS = 200
@@ -35,20 +38,6 @@ type LoadState<T> = {
   status: "idle" | "loading" | "ready" | "error"
   data: T | null
   error?: string
-}
-
-type SheetCellRecord = {
-  reference: string
-  text?: TextCell
-  formula?: Formula
-}
-
-type SheetSummary = {
-  name: string
-  cellMap: Map<string, SheetCellRecord>
-  maxRow: number
-  maxColumn: number
-  firstCell: string
 }
 
 type GridMetrics = {
@@ -125,100 +114,70 @@ function App() {
   const [selectedSheetName, setSelectedSheetName] = useState<string | null>(null)
   const [activeCell, setActiveCell] = useState<string>("A1")
   const [cellValues, setCellValues] = useState<Record<string, string>>({})
+  const [formulaValues, setFormulaValues] = useState<Record<string, string>>({})
+  const formulaClientRef = useRef<FormulaWorkerClient | null>(null)
+  const cellValuesRef = useRef<Record<string, string>>({})
+  const formulaEngineRequestRef = useRef(0)
+  const workbookIdRef = useRef<string | null>(null)
   const [filterQuery, setFilterQuery] = useState("")
 
   useEffect(() => {
-    const loadTexts = async () => {
-      setTextsState({ status: "loading", data: null })
-      try {
-        const response = await fetch(TEXT_URL)
-        if (!response.ok) {
-          throw new Error("Failed to load text data (" + response.status + ")")
-        }
-        const payload: TextData = await response.json()
-        setTextsState({ status: "ready", data: payload })
-      } catch (error) {
-        setTextsState({
-          status: "error",
-          data: null,
-          error: error instanceof Error ? error.message : "Unknown error",
-        })
-      }
-    }
-
-    const loadEquations = async () => {
-      setEquationsState({ status: "loading", data: null })
-      try {
-        const response = await fetch(EQUATIONS_URL)
-        if (!response.ok) {
-          throw new Error(
-            "Failed to load equation data (" + response.status + ")",
-          )
-        }
-        const payload: EquationsData = await response.json()
-        setEquationsState({ status: "ready", data: payload })
-      } catch (error) {
-        setEquationsState({
-          status: "error",
-          data: null,
-          error: error instanceof Error ? error.message : "Unknown error",
-        })
-      }
-    }
-
-    loadTexts()
-    loadEquations()
-  }, [])
-
-  const textSheets = useMemo(() => {
     if (textsState.status !== "ready" || !textsState.data) {
-      return [] as TextSheet[]
+      return
     }
-    return textsState.data.workbook.sheets
-  }, [textsState])
-
-  const equationSheets = useMemo(() => {
-    if (equationsState.status !== "ready" || !equationsState.data) {
-      return [] as EquationSheet[]
+    const workbookId = textsState.data.workbook.file_name
+    if (workbookIdRef.current !== workbookId) {
+      workbookIdRef.current = workbookId
+      if (Object.keys(cellValuesRef.current).length > 0) {
+        setCellValues({})
+      }
     }
-    return equationsState.data.workbook.sheets
-  }, [equationsState])
+  }, [textsState.status, textsState.data])
 
-  const textSheetMap = useMemo(() => {
-    const map = new Map<string, TextSheet>()
-    textSheets.forEach((sheet) => {
-      map.set(sheet.name, sheet)
-    })
-    return map
-  }, [textSheets])
 
-  const equationSheetMap = useMemo(() => {
-    const map = new Map<string, EquationSheet>()
-    equationSheets.forEach((sheet) => {
-      map.set(sheet.name, sheet)
-    })
-    return map
-  }, [equationSheets])
+  useEffect(() => {
+    const client = formulaClientRef.current
+    if (!client) {
+      return
+    }
+    if (textsState.status !== "ready" || equationsState.status !== "ready") {
+      setFormulaValues({})
+      return
+    }
+    let cancelled = false
+    const requestId = formulaEngineRequestRef.current + 1
+    formulaEngineRequestRef.current = requestId
 
-  const textCellMap = useMemo(() => {
-    const map = new Map<string, TextCell>()
-    textSheets.forEach((sheet) => {
-      sheet.texts.forEach((cell) => {
-        map.set(makeKey(sheet.name, cell.cell), cell)
-      })
-    })
-    return map
-  }, [textSheets])
+    const build = async () => {
+      try {
+        const snapshot = await client.build(textSheets, equationSheets)
+        if (cancelled || requestId !== formulaEngineRequestRef.current) {
+          return
+        }
+        let combinedValues = snapshot.values
+        const overrides = cellValuesRef.current
+        if (Object.keys(overrides).length > 0) {
+          const overrideResult = await client.applyOverrides(overrides)
+          if (cancelled || requestId !== formulaEngineRequestRef.current) {
+            return
+          }
+          combinedValues = { ...combinedValues, ...overrideResult.values }
+        }
+        setFormulaValues(combinedValues)
+      } catch (error) {
+        if (!cancelled) {
+          console.error("[formula] Failed to build engine", error)
+          setFormulaValues({})
+        }
+      }
+    }
 
-  const formulaMap = useMemo(() => {
-    const map = new Map<string, Formula>()
-    equationSheets.forEach((sheet) => {
-      sheet.formulas?.forEach((formula) => {
-        map.set(makeKey(sheet.name, formula.cell), formula)
-      })
-    })
-    return map
-  }, [equationSheets])
+    build()
+
+    return () => {
+      cancelled = true
+    }
+  }, [equationSheets, equationsState.status, textSheets, textsState.status])
 
   const validationLookup = useMemo<ValidationLookup>(() => {
     const map: ValidationLookup = new Map()
@@ -291,20 +250,6 @@ function App() {
     [validationLookup, cellValues]
   )
 
-  useEffect(() => {
-    if (textsState.status !== "ready" || !textsState.data) {
-      return
-    }
-    const initialEntries: Record<string, string> = {}
-    textsState.data.workbook.sheets.forEach((sheet) => {
-      sheet.texts.forEach((cell) => {
-        const key = makeKey(sheet.name, cell.cell)
-        const value = cell.computed_text ?? cell.original_text ?? ""
-        initialEntries[key] = value ?? ""
-      })
-    })
-    setCellValues(initialEntries)
-  }, [textsState])
 
   useEffect(() => {
     if (!selectedSheetName && textSheets.length > 0) {
@@ -487,6 +432,12 @@ function App() {
     if (Object.prototype.hasOwnProperty.call(cellValues, key)) {
       return cellValues[key] ?? ""
     }
+    if (Object.prototype.hasOwnProperty.call(formulaValues, key)) {
+      const value = formulaValues[key]
+      if (value !== undefined) {
+        return value
+      }
+    }
     const textCell = textCellMap.get(key)
     if (textCell?.computed_text) {
       return textCell.computed_text
@@ -496,7 +447,6 @@ function App() {
     }
     return ""
   }
-
   function getOriginalCellValue(sheet: string, reference: string): string {
     const key = makeKey(sheet, reference)
     const textCell = textCellMap.get(key)
@@ -517,21 +467,51 @@ function App() {
   }, [selectedSheetName, selectedCellKey, activeCell, getValidationOptionsForCell])
 
   const handleCellValueChange = (sheet: string, reference: string, value: string) => {
-    setCellValues((previous) => ({
-      ...previous,
-      [makeKey(sheet, reference)]: value,
-    }))
+    const key = makeKey(sheet, reference)
+    setCellValues((previous) => {
+      if (previous[key] === value) {
+        return previous
+      }
+      return {
+        ...previous,
+        [key]: value,
+      }
+    })
+    const client = formulaClientRef.current
+    if (client) {
+      client
+        .setCellValue(sheet, reference, value)
+        .then((update) => {
+          setFormulaValues(update.values)
+        })
+        .catch((error) => {
+          console.error("[formula] Failed to update cell", error)
+        })
+    }
   }
-
   const handleResetCellValue = (sheet: string, reference: string) => {
     const key = makeKey(sheet, reference)
     const original = getOriginalCellValue(sheet, reference)
-    setCellValues((previous) => ({
-      ...previous,
-      [key]: original,
-    }))
+    setCellValues((previous) => {
+      if (!Object.prototype.hasOwnProperty.call(previous, key)) {
+        return previous
+      }
+      const next = { ...previous }
+      delete next[key]
+      return next
+    })
+    const client = formulaClientRef.current
+    if (client) {
+      client
+        .setCellValue(sheet, reference, original)
+        .then((update) => {
+          setFormulaValues(update.values)
+        })
+        .catch((error) => {
+          console.error("[formula] Failed to reset cell", error)
+        })
+    }
   }
-
   const handleNavigateToReference = (reference: string) => {
     const [sheet, cell] = reference.split("!")
     if (sheet && cell) {
@@ -649,85 +629,18 @@ function App() {
                   onSelectCell={(ref) => setActiveCell(ref)}
                 />
               ) : (
-                <div className="grid-wrapper" role="region" aria-label="Sheet grid">
-                  <table className="grid" role="grid">
-                    <thead>
-                      <tr>
-                        <th className="corner" aria-hidden="true">
-                          {sheetSummary.name}
-                        </th>
-                        {gridMetrics.columnHeaders.map((column) => (
-                          <th
-                            key={column.index}
-                            scope="col"
-                            className={
-                              parseCellReference(activeCell)?.column === column.index
-                                ? "column-heading is-active"
-                                : "column-heading"
-                            }
-                          >
-                            {column.label}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {gridMetrics.rowIndices.map((rowNumber) => {
-                        const isActiveRow = parseCellReference(activeCell)?.row === rowNumber
-                        return (
-                          <tr key={rowNumber}>
-                            <th
-                              scope="row"
-                              className={isActiveRow ? "row-heading is-active" : "row-heading"}
-                            >
-                              {rowNumber}
-                            </th>
-                            {gridMetrics.columnHeaders.map((column) => {
-                              const reference = makeCellReference(rowNumber, column.index)
-                              const cellKey = makeKey(sheetSummary.name, reference)
-                              const cellRecord = sheetSummary.cellMap.get(reference)
-                              const displayValue = getCellValue(
-                                sheetSummary.name,
-                                reference,
-                              )
-                              const isActiveCell = reference === activeCell
-                              const withinFilter = matchesFilter(
-                                sheetSummary.name,
-                                reference,
-                              )
-                              const hasFormula = Boolean(cellRecord?.formula)
-                              const classNames = ["cell"]
-                              if (isActiveCell) {
-                                classNames.push("is-active")
-                              }
-                              if (hasFormula) {
-                                classNames.push("has-formula")
-                              }
-                              if (!displayValue) {
-                                classNames.push("is-empty")
-                              }
-                              if (!withinFilter) {
-                                classNames.push("is-muted")
-                              }
-                              return (
-                                <td
-                                  key={cellKey}
-                                  role="gridcell"
-                                  className={classNames.join(" ")}
-                                  onClick={() => setActiveCell(reference)}
-                                  title={cellRecord?.formula?.a1 ?? ""}
-                                >
-                                  <span className="cell-content">{displayValue}</span>
-                                  {hasFormula ? <span className="formula-marker" aria-hidden="true" /> : null}
-                                </td>
-                              )
-                            })}
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                <FormattedSheet
+                  summary={sheetSummary}
+                  activeCell={activeCell}
+                  getValue={(cell) => getCellValue(sheetSummary.name, cell)}
+                  onSelectCell={(cell) => setActiveCell(cell)}
+                  matchesFilter={(reference) =>
+                    matchesFilter(sheetSummary.name, reference)
+                  }
+                  onCellValueChange={(reference, value) =>
+                    handleCellValueChange(sheetSummary.name, reference, value)
+                  }
+                />
               )}
             </>
           )}
@@ -2111,7 +2024,7 @@ function FloorPlanSheet({
     </div>
   )
 }
-
-
 export default App
+
+
 
